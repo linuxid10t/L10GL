@@ -1,0 +1,725 @@
+/*
+ * virge.c - Userspace drawing engine driver for S3 ViRGE (86C325)
+ *
+ * Talks directly to the hardware via PCI MMIO — no DRM, no DRI, no kernel
+ * module.  Requires a working fbdev console (the kernel savagefb or VESA
+ * framebuffer driver must have already established the video mode).
+ *
+ * Based on S3 ViRGE Integrated 3D Accelerator datasheet, DB019-B, Aug 1996.
+ *
+ * The ViRGE uses the "new MMIO" method: registers are at offset 0x1000000
+ * from BAR0. The first 16MB of the BAR0 aperture is linear framebuffer
+ * memory. The S3d Engine registers for each command type (2D, 3D line,
+ * 3D triangle) are at fixed offsets within the 0x1000000+ region.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <stdint.h>
+#include <linux/fb.h>
+
+#include "virge.h"
+
+/* ========================================================================
+ * PCI Discovery — find the S3 ViRGE via /sys/bus/pci/devices
+ *
+ * Same approach as the MGA-1064 driver: enumerate /sys/bus/pci/devices/,
+ * read vendor/device hex files, parse BDF, read BARs from resource file.
+ * ======================================================================== */
+
+struct pci_bdf {
+    int domain;
+    int bus;
+    int dev;
+    int func;
+    uint32_t bar[6];
+    int irq;
+};
+
+static int pci_read_hex(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return -1;
+    unsigned int val = 0;
+    if (fscanf(f, "%x", &val) != 1) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    return (int)val;
+}
+
+static int pci_find_device(struct pci_bdf *dev, uint16_t vendor, uint16_t device)
+{
+    FILE *f = popen("ls /sys/bus/pci/devices/", "r");
+    if (!f)
+        return -errno;
+
+    char line[256];
+    int found = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+
+        char path[512];
+
+        snprintf(path, sizeof(path),
+                 "/sys/bus/pci/devices/%s/vendor", line);
+        if (pci_read_hex(path) != vendor)
+            continue;
+
+        snprintf(path, sizeof(path),
+                 "/sys/bus/pci/devices/%s/device", line);
+        if (pci_read_hex(path) != device)
+            continue;
+
+        /* Found it — parse BDF */
+        unsigned int domain, bus, devnum, func;
+        if (sscanf(line, "%x:%x:%x.%x", &domain, &bus, &devnum, &func) != 4)
+            continue;
+
+        dev->domain = domain;
+        dev->bus = bus;
+        dev->dev = devnum;
+        dev->func = func;
+
+        /* Read all BARs from the resource file */
+        snprintf(path, sizeof(path),
+                 "/sys/bus/pci/devices/%s/resource", line);
+        FILE *rf = fopen(path, "r");
+        if (rf) {
+            for (int j = 0; j < 6; j++) {
+                unsigned long start, end, flags;
+                if (fscanf(rf, "%lx %lx %lx", &start, &end, &flags) == 3)
+                    dev->bar[j] = (uint32_t)start;
+            }
+            fclose(rf);
+        }
+
+        snprintf(path, sizeof(path),
+                 "/sys/bus/pci/devices/%s/irq", line);
+        dev->irq = pci_read_hex(path);
+
+        found = 1;
+        break;
+    }
+
+    pclose(f);
+    return found ? 0 : -ENODEV;
+}
+
+/* ========================================================================
+ * Memory Mapping
+ * ======================================================================== */
+
+/*
+ * Map BAR0 via /sys/bus/pci/devices/<bdf>/resource0
+ *
+ * The ViRGE BAR0 is a 64MB aperture. We map enough to cover both the
+ * linear framebuffer (first 4MB) and the MMIO registers (at 0x1000000).
+ * Mapping the full 64MB is simplest.
+ */
+static void *map_bar0(struct pci_bdf *dev, size_t *size_out)
+{
+    char path[256];
+    snprintf(path, sizeof(path),
+             "/sys/bus/pci/devices/%04x:%02x:%02x.%x/resource0",
+             dev->domain, dev->bus, dev->dev, dev->func);
+
+    /* ViRGE BAR0 is 64MB (0x4000000) */
+    size_t size = 0x4000000;
+
+    int fd = open(path, O_RDWR | O_SYNC);
+    if (fd < 0) {
+        perror(path);
+        return NULL;
+    }
+
+    void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        perror("mmap BAR0");
+        close(fd);
+        return NULL;
+    }
+
+    *size_out = size;
+    return ptr;
+}
+
+/* ========================================================================
+ * Engine Synchronization
+ * ======================================================================== */
+
+void virge_wait_engine(struct virge_ctx *ctx)
+{
+    while (virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_3DBUSY)
+        ;
+}
+
+void virge_wait_vsync(struct virge_ctx *ctx)
+{
+    /* Wait for vsync to end (not in retrace) */
+    while (virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_VSYNC)
+        ;
+    /* Wait for vsync to start (entering retrace) */
+    while (!(virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_VSYNC))
+        ;
+}
+
+/* ========================================================================
+ * Global Engine Initialization
+ *
+ * Sets up the 3D register bank's static registers: destination base,
+ * Z-base, strides, and clipping rectangle. These are set once and don't
+ * need to be reprogrammed for each triangle.
+ * ======================================================================== */
+
+static void engine_init_3d(struct virge_ctx *ctx)
+{
+    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t z_stride = ctx->width * 2;  /* Z is always 16-bit */
+
+    /* DEST_BASE: framebuffer origin in VRAM */
+    virge_write32(ctx, VIRGE_3D_DEST_BASE, ctx->fb_base);
+
+    /* Z_BASE: Z-buffer origin (after framebuffer), quadword aligned */
+    uint32_t z_base = ctx->z_base;
+    z_base &= ~0x7;  /* force quadword alignment */
+    virge_write32(ctx, VIRGE_3D_Z_BASE, z_base);
+
+    /* DEST_SRC_STR: destination stride [27:16], source stride [11:0] */
+    virge_write32(ctx, VIRGE_3D_DEST_SRC_STR,
+                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+
+    /* Z_STRIDE */
+    virge_write32(ctx, VIRGE_3D_Z_STRIDE, z_stride & 0xFFF);
+
+    /* Clip to full screen */
+    virge_write32(ctx, VIRGE_3D_CLIP_L_R,
+                  ((ctx->width - 1) << 16) | 0);
+    virge_write32(ctx, VIRGE_3D_CLIP_T_B,
+                  ((ctx->height - 1) << 16) | 0);
+}
+
+/* ========================================================================
+ * Rectangle Fill (2D)
+ *
+ * Uses the 2D rectangle fill command. The ViRGE rectangle fill writes
+ * a solid color rectangle using the S3d Engine's 2D path.
+ * ======================================================================== */
+
+void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
+                     uint32_t color)
+{
+    virge_wait_engine(ctx);
+
+    uint32_t dest_stride = ctx->width * ctx->bpp;
+
+    /* Set destination base and stride for the 2D bank */
+    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
+    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
+                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
+                  ((ctx->width - 1) << 16) | 0);
+    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
+                  ((ctx->height - 1) << 16) | 0);
+
+    /* Foreground color = fill color */
+    virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
+
+    /* Width and height: W-1 in [26:16], H in [10:0] */
+    virge_write32(ctx, VIRGE_2D_RWIDTH_HEIGHT,
+                  (((w - 1) & 0x7FF) << 16) | (h & 0x7FF));
+
+    /* Destination XY: X in [26:16], Y in [10:0] */
+    virge_write32(ctx, VIRGE_2D_RDEST_XY,
+                  ((x & 0x7FF) << 16) | (y & 0x7FF));
+
+    /*
+     * Command Set for rectangle fill:
+     *   bit 28: rectangle fill
+     *   bit 8: mono pattern (forced, selects PAT_FG_CLR)
+     *   bits 7-5: destination format
+     *   bits 24-17: ROP = PATCOPY (0xF0)
+     *   bit 1: clipping enabled
+     */
+    uint32_t cmd = VIRGE_2D_CMD_RECT_FILL
+                 | VIRGE_2D_MONO_PATTERN
+                 | ctx->dest_format
+                 | (VIRGE_ROP_PATCOPY << 17)
+                 | VIRGE_CMD_CLIP_ENABLE;
+    /* bit 31 = 0 for 2D */
+
+    virge_write32(ctx, VIRGE_2D_CMD_SET, cmd);
+}
+
+/* ========================================================================
+ * Z Buffer Clear
+ *
+ * Fills the Z-buffer region with a constant Z value. We use a 2D
+ * rectangle fill targeting the Z-buffer's VRAM address.
+ * ======================================================================== */
+
+void virge_clear_z(struct virge_ctx *ctx, float z)
+{
+    virge_wait_engine(ctx);
+
+    /* The Z value as a 16-bit fixed-point word.
+     * ViRGE Z is S16.15. For the MUX scheme bit 15 has special meaning,
+     * but for normal Z-buffering we just write the value directly. */
+    uint16_t z_val = (uint16_t)(z * 65535.0f);
+    uint32_t z_color = (z_val) | (z_val << 16);  /* pack for stride fill */
+
+    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t z_stride = ctx->width * 2;  /* 16-bit Z */
+
+    /* Reprogram 2D registers to point at Z buffer instead of framebuffer */
+    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->z_base & ~0x7);
+    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
+                  ((z_stride & 0xFFF) << 16) | (z_stride & 0xFFF));
+    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
+                  ((ctx->width * 2 - 1) << 16) | 0);
+    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
+                  ((ctx->height - 1) << 16) | 0);
+
+    /* Fill color = the Z value repeated */
+    virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, z_color);
+
+    /* Width = width * 2 bytes (since Z is 16-bit), height = screen height */
+    int z_width_bytes = ctx->width * 2;
+    virge_write32(ctx, VIRGE_2D_RWIDTH_HEIGHT,
+                  (((z_width_bytes - 1) & 0x7FF) << 16) |
+                  (ctx->height & 0x7FF));
+
+    virge_write32(ctx, VIRGE_2D_RDEST_XY, 0);
+
+    /* Use 8bpp dest format for the fill since we're writing raw bytes */
+    uint32_t cmd = VIRGE_2D_CMD_RECT_FILL
+                 | VIRGE_2D_MONO_PATTERN
+                 | ctx->dest_format
+                 | (VIRGE_ROP_PATCOPY << 17)
+                 | VIRGE_CMD_CLIP_ENABLE;
+
+    virge_write32(ctx, VIRGE_2D_CMD_SET, cmd);
+
+    /* Restore 2D DEST_BASE to framebuffer for subsequent operations */
+    virge_wait_engine(ctx);
+    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
+    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
+                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+}
+
+/* ========================================================================
+ * Gouraud-Shaded Triangle
+ *
+ * The ViRGE's native 3D triangle primitive handles the entire triangle
+ * in one engine kick — no software trapezoid decomposition needed.
+ *
+ * Setup:
+ *   1. Sort vertices by Y (descending — ViRGE renders bottom-to-top)
+ *   2. Compute edge slopes (dX/dY) for sides 02, 01, 12
+ *   3. Compute Gouraud color gradients (dR/dX, dR/dY, etc.) via plane eq
+ *   4. Compute Z gradients
+ *   5. Program CMD_SET, color/Z registers, edge registers
+ *   6. Kick by writing CMD_SET (autoexecute off)
+ * ======================================================================== */
+
+/*
+ * Compute dX/dY as S11.20 fixed point.
+ * The ViRGE convention (from the 2D line programming examples):
+ *   dXdY = -(ΔX / ΔY) * (1 << 20)
+ * This gives the slope with inverted sign, matching the engine's
+ * bottom-to-top rendering direction.
+ */
+static int32_t compute_dxdy(int x_start, int y_start, int x_end, int y_end)
+{
+    int dx = x_end - x_start;
+    int dy = y_end - y_start;
+
+    if (dy == 0) dy = 1;  /* avoid division by zero */
+
+    /* dXdY = -(ΔX << 20) / ΔY */
+    return -(int32_t)(((int64_t)dx << VIRGE_X_FRAC_BITS) / dy);
+}
+
+void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
+                                  struct virge_vertex v0,
+                                  struct virge_vertex v1,
+                                  struct virge_vertex v2)
+{
+    /*
+     * Sort vertices by Y descending: v0 = bottom (largest Y),
+     * v1 = middle, v2 = top (smallest Y).
+     * The ViRGE always renders from bottom to top.
+     */
+    if (v0.y < v1.y) { struct virge_vertex t = v0; v0 = v1; v1 = t; }
+    if (v1.y < v2.y) { struct virge_vertex t = v1; v1 = v2; v2 = t; }
+    if (v0.y < v1.y) { struct virge_vertex t = v0; v0 = v1; v1 = t; }
+
+    int y_bot = (int)v0.y;
+    int y_mid = (int)v1.y;
+    int y_top = (int)v2.y;
+
+    /* Degenerate triangle */
+    if (y_bot == y_top)
+        return;
+
+    /*
+     * Compute plane-equation gradients for Z, R, G, B, A.
+     *
+     * For attribute F at vertices F0,F1,F2 at positions (x0,y0), etc:
+     *   det = (x1-x0)(y2-y0) - (x2-x0)(y1-y0)
+     *   dFdx = [(F1-F0)(y2-y0) - (F2-F0)(y1-y0)] / det
+     *   dFdy = [(F2-F0)(x1-x0) - (F1-F0)(x2-x0)] / det
+     *
+     * Note: v0 is the BOTTOM vertex (largest Y), not the top.
+     * The plane equation is still computed from these three points.
+     */
+    float dx10 = v1.x - v0.x;
+    float dy10 = v1.y - v0.y;
+    float dx20 = v2.x - v0.x;
+    float dy20 = v2.y - v0.y;
+    float det = dx10 * dy20 - dx20 * dy10;
+
+    if (det == 0.0f)
+        return;
+
+    float inv_det = 1.0f / det;
+
+    float dzdx = ((v1.z - v0.z) * dy20 - (v2.z - v0.z) * dy10) * inv_det;
+    float dzdy = ((v2.z - v0.z) * dx10 - (v1.z - v0.z) * dx20) * inv_det;
+
+    float drdx = ((v1.r - v0.r) * dy20 - (v2.r - v0.r) * dy10) * inv_det;
+    float drdy = ((v2.r - v0.r) * dx10 - (v1.r - v0.r) * dx20) * inv_det;
+
+    float dgdx = ((v1.g - v0.g) * dy20 - (v2.g - v0.g) * dy10) * inv_det;
+    float dgdy = ((v2.g - v0.g) * dx10 - (v1.g - v0.g) * dx20) * inv_det;
+
+    float dbdx = ((v1.b - v0.b) * dy20 - (v2.b - v0.b) * dy10) * inv_det;
+    float dbdy = ((v2.b - v0.b) * dx10 - (v1.b - v0.b) * dx20) * inv_det;
+
+    float dadx = ((v1.a - v0.a) * dy20 - (v2.a - v0.a) * dy10) * inv_det;
+    float dady = ((v2.a - v0.a) * dx10 - (v1.a - v0.a) * dx20) * inv_det;
+
+    /* Edge slopes (dX/dY in S11.20)
+     *
+     * Side 02: v0(bottom) → v2(top) — the long edge
+     * Side 01: v0(bottom) → v1(middle)
+     * Side 12: v1(middle) → v2(top)
+     */
+    int32_t dXdY02 = compute_dxdy((int)v0.x, y_bot, (int)v2.x, y_top);
+    int32_t dXdY01 = compute_dxdy((int)v0.x, y_bot, (int)v1.x, y_mid);
+    int32_t dXdY12 = compute_dxdy((int)v1.x, y_mid, (int)v2.x, y_top);
+
+    /* Determine L/R direction: which side of the triangle is the 02 edge?
+     * If v1 is to the left of the v0→v2 line, then side 02 is on the
+     * right, so we render right-to-left (L/R bit = 0).
+     * If v1 is to the right, side 02 is on the left → render left-to-right
+     * (L/R bit = 1).
+     *
+     * The cross product of (v2-v0) × (v1-v0) tells us:
+     *   positive → v1 is to the right of v0→v2 → 02 is on the left → L/R=1
+     *   negative → v1 is to the left of v0→v2 → 02 is on the right → L/R=0
+     */
+    int lr_direction;
+    float cross = (v2.x - v0.x) * (v1.y - v0.y) - (v1.x - v0.x) * (v2.y - v0.y);
+    if (cross > 0)
+        lr_direction = 1;  /* side 02 on left, render left-to-right */
+    else
+        lr_direction = 0;  /* side 02 on right, render right-to-left */
+
+    /* Scan line counts */
+    int scan_01 = y_bot - y_mid;  /* bottom half (side 01) */
+    int scan_12 = y_mid - y_top;  /* top half (side 12) */
+
+    /* Edge X end values (S11.20) */
+    int32_t x_end01 = VIRGE_X_FIXED(v1.x);  /* X at middle vertex */
+    int32_t x_end12 = VIRGE_X_FIXED(v2.x);  /* X at top vertex */
+
+    /* Evaluate color and Z at the bottom vertex (the start point) */
+    float z_s = v0.z;
+    float r_s = v0.r;
+    float g_s = v0.g;
+    float b_s = v0.b;
+    float a_s = v0.a;
+
+    virge_wait_engine(ctx);
+
+    /* --- Program color start values (S8.7 packed) --- */
+    virge_write32(ctx, VIRGE_3D_TGS_BS,
+                  ((uint16_t)VIRGE_COLOR_FIXED(g_s) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(b_s));
+    virge_write32(ctx, VIRGE_3D_TAS_RS,
+                  ((uint16_t)VIRGE_COLOR_FIXED(a_s) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(r_s));
+
+    /* --- Program color deltas (S8.7 packed) --- */
+    virge_write32(ctx, VIRGE_3D_TdGdX_dBdX,
+                  ((uint16_t)VIRGE_COLOR_FIXED(dgdx) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(dbdx));
+    virge_write32(ctx, VIRGE_3D_TdAdX_dRdX,
+                  ((uint16_t)VIRGE_COLOR_FIXED(dadx) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(drdx));
+    virge_write32(ctx, VIRGE_3D_TdGdY_dBdY,
+                  ((uint16_t)VIRGE_COLOR_FIXED(dgdy) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(dbdy));
+    virge_write32(ctx, VIRGE_3D_TdAdY_dRdY,
+                  ((uint16_t)VIRGE_COLOR_FIXED(dady) << 16) |
+                  (uint16_t)VIRGE_COLOR_FIXED(drdy));
+
+    /* --- Program Z start and deltas (S16.15) --- */
+    virge_write32(ctx, VIRGE_3D_TZS, (uint32_t)VIRGE_Z_FIXED(z_s));
+    virge_write32(ctx, VIRGE_3D_TdZdX, (uint32_t)VIRGE_Z_FIXED(dzdx));
+    virge_write32(ctx, VIRGE_3D_TdZdY, (uint32_t)VIRGE_Z_FIXED(dzdy));
+
+    /* --- Program edge geometry --- */
+    virge_write32(ctx, VIRGE_3D_TdXdY02, (uint32_t)dXdY02);
+    virge_write32(ctx, VIRGE_3D_TdXdY01, (uint32_t)dXdY01);
+    virge_write32(ctx, VIRGE_3D_TdXdY12, (uint32_t)dXdY12);
+
+    virge_write32(ctx, VIRGE_3D_TXEND01, (uint32_t)x_end01);
+    virge_write32(ctx, VIRGE_3D_TXEND12, (uint32_t)x_end12);
+
+    virge_write32(ctx, VIRGE_3D_TXS,
+                  (uint32_t)VIRGE_X_FIXED(v0.x));
+    virge_write32(ctx, VIRGE_3D_TYS, (uint32_t)y_bot);
+
+    /* --- Program scan counts and L/R direction --- */
+    virge_write32(ctx, VIRGE_3D_TY01_Y12,
+                  ((uint32_t)lr_direction << 31) |
+                  ((scan_01 & 0x7FF) << 16) |
+                  (scan_12 & 0x7FF));
+
+    /* --- Program Command Set and execute --- */
+    uint32_t cmd = VIRGE_CMD_3D
+                 | VIRGE_3D_GOURAUD
+                 | ctx->dest_format
+                 | VIRGE_ZB_NORMAL
+                 | VIRGE_ZBC_LEQUAL     /* default: pass if Zs <= Zzb */
+                 | VIRGE_ZUP_ENABLE     /* update Z on pass */
+                 | VIRGE_CMD_CLIP_ENABLE;
+
+    virge_write32(ctx, VIRGE_3D_CMD_SET, cmd);
+}
+
+/* ========================================================================
+ * 2D Line Drawing
+ *
+ * The ViRGE 2D line engine draws from bottom to top. We compute the
+ * Bresenham parameters and program the 2D line registers.
+ * ======================================================================== */
+
+void virge_draw_line(struct virge_ctx *ctx,
+                      int x0, int y0, int x1, int y1, uint32_t color)
+{
+    virge_wait_engine(ctx);
+
+    /*
+     * The ViRGE 2D line engine always draws from bottom to top.
+     * The starting point must be the endpoint with the largest Y.
+     * If y0 == y1, use the largest X as start (horizontal line special case).
+     */
+    if (y0 < y1 || (y0 == y1 && x0 < x1)) {
+        int tx = x0; x0 = x1; x1 = tx;
+        int ty = y0; y0 = y1; y1 = ty;
+    }
+
+    int dX = x1 - x0;
+    int dY = y1 - y0;
+    int abs_dX = dX < 0 ? -dX : dX;
+    int abs_dY = dY < 0 ? -dY : dY;
+
+    if (abs_dY == 0 && abs_dX == 0)
+        return;
+
+    /*
+     * X DELTA = -(ΔX << 20) / ΔY (integer divide)
+     * For horizontal lines (ΔY = 0), X DELTA = 0 and the engine uses
+     * the endpoint registers.
+     */
+    int32_t x_delta;
+    if (abs_dY == 0) {
+        x_delta = 0;  /* horizontal line special case */
+    } else {
+        x_delta = -(int32_t)(((int64_t)dX << 20) / abs_dY);
+    }
+
+    /*
+     * X START = (xSTART << 20) + (X DELTA/2) for X-major lines
+     *         = (xSTART << 20) for Y-major lines
+     *
+     * A line is X-major if |ΔX| > |ΔY|.
+     */
+    int32_t x_start;
+    int x_major = (abs_dX > abs_dY);
+    if (x_major && x_delta > 0) {
+        x_start = (x0 << 20) + (x_delta / 2);
+    } else if (x_major && x_delta < 0) {
+        x_start = (x0 << 20) + (x_delta / 2) + ((1 << 20) - 1);
+    } else {
+        x_start = (x0 << 20);
+    }
+
+    int y_count = abs_dY + 1;
+
+    /* Direction bit: 1 = left to right, 0 = right to left */
+    uint32_t dir = (dX >= 0) ? 1 : 0;
+
+    /* Y START = y0 (the bottom point, which has the largest Y) */
+
+    uint32_t dest_stride = ctx->width * ctx->bpp;
+
+    /* Set up 2D registers for line draw bank */
+    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
+    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
+                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
+                  ((ctx->width - 1) << 16) | 0);
+    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
+                  ((ctx->height - 1) << 16) | 0);
+
+    /* Foreground color */
+    virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
+
+    /* Line endpoints: END0 [31:16], END1 [15:0] */
+    /* END0 = first pixel drawn for bottommost scanline
+     * END1 = last pixel drawn for topmost scanline
+     * For a simple line, both are the endpoints' X coordinates. */
+    uint32_t endpoints = ((x0 & 0xFFFF) << 16) | (x1 & 0xFFFF);
+    virge_write32(ctx, 0xA96C, endpoints);  /* L_XEND0_END1 */
+
+    /* X DELTA and X START */
+    virge_write32(ctx, 0xA970, (uint32_t)x_delta);  /* L_XDELTA */
+    virge_write32(ctx, 0xA974, (uint32_t)x_start);  /* L_XSTART */
+    virge_write32(ctx, 0xA978, (uint32_t)y0);       /* L_YSTART */
+
+    /* Command Set for 2D line:
+     *   bits [31:27] = 00110 (2D line)
+     *   bit 8: mono pattern
+     *   bits 7-5: dest format
+     *   bits 24-17: ROP = PATCOPY (0xF0)
+     *   bit 1: clip enable
+     */
+    uint32_t cmd = ((0x06 << 27) & 0x1F)  /* 2D line = bits [30:27] = 0110 */
+                 | ctx->dest_format
+                 | (VIRGE_ROP_PATCOPY << 17)
+                 | VIRGE_CMD_CLIP_ENABLE;
+
+    /* Y count + direction — this is the kick register for 2D lines */
+    virge_write32(ctx, 0xA900, cmd);  /* L_CMD_SET */
+
+    uint32_t ycnt_dir = (dir << 31) | (y_count & 0x7FF);
+    virge_write32(ctx, 0xA97C, ycnt_dir);  /* L_YCNT_DIR — kicks engine */
+}
+
+/* ========================================================================
+ * Initialization
+ * ======================================================================== */
+
+int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
+{
+    memset(ctx, 0, sizeof(*ctx));
+
+    ctx->width = width;
+    ctx->height = height;
+    ctx->bpp = bpp;
+    ctx->fb_fd = -1;
+    ctx->bar_fd = -1;
+
+    /* Find the S3 ViRGE on the PCI bus */
+    struct pci_bdf pci = {0};
+    int ret = pci_find_device(&pci, S3_PCI_VENDOR_ID,
+                              S3_PCI_DEVICE_VIRGE);
+    if (ret < 0) {
+        fprintf(stderr, "S3 ViRGE: PCI device not found\n");
+        return ret;
+    }
+
+    printf("S3 ViRGE: Found at %04x:%02x:%02x.%x\n",
+           pci.domain, pci.bus, pci.dev, pci.func);
+    printf("  BAR0: 0x%08x (64MB aperture)\n", pci.bar[0]);
+
+    ctx->bar0 = pci.bar[0];
+
+    /* Map BAR0 (64MB aperture containing framebuffer + MMIO) */
+    ctx->mmio = map_bar0(&pci, &ctx->mmio_size);
+    if (!ctx->mmio) {
+        fprintf(stderr, "S3 ViRGE: Failed to map BAR0\n");
+        return -ENOMEM;
+    }
+    printf("  BAR0 mapped: %zu bytes at %p\n", ctx->mmio_size, ctx->mmio);
+
+    /* The framebuffer is at the start of BAR0 (offset 0).
+     * The MMIO registers are at offset 0x1000000.
+     * For register access, we set mmio to point at BAR0 + 0x1000000.
+     * But we keep the full BAR0 mapping and just offset our writes.
+     *
+     * Actually, we need both: the framebuffer pointer for CPU access,
+     * and the MMIO pointer for register access. Since both are in the
+     * same BAR0 mapping, we set:
+     *   ctx->fb   = BAR0 base + 0 (framebuffer)
+     *   ctx->mmio = BAR0 base + VIRGE_MMIO_OFFSET (registers)
+     */
+    ctx->fb = ctx->mmio;                              /* framebuffer at offset 0 */
+    ctx->mmio = (void *)((char *)ctx->mmio + VIRGE_MMIO_OFFSET);  /* regs at 0x1000000 */
+
+    /* Try to get framebuffer size from /dev/fb0 if available */
+    ctx->fb_fd = open("/dev/fb0", O_RDWR);
+    if (ctx->fb_fd >= 0) {
+        struct fb_fix_screeninfo finfo;
+        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
+            ctx->fb_size = finfo.smem_len;
+        } else {
+            ctx->fb_size = width * height * bpp;
+        }
+    } else {
+        ctx->fb_size = width * height * bpp;
+    }
+
+    /* Compute memory layout (byte offsets in VRAM) */
+    ctx->fb_base = 0;
+    ctx->z_base = width * height * bpp;  /* Z buffer after framebuffer */
+    ctx->vram_size = ctx->fb_size;
+
+    /* Set destination format field based on bpp */
+    if (bpp == 2)
+        ctx->dest_format = VIRGE_DEST_16BPP;
+    else if (bpp == 3)
+        ctx->dest_format = VIRGE_DEST_24BPP;
+    else
+        ctx->dest_format = VIRGE_DEST_8BPP;
+
+    /* Initialize the 3D register bank */
+    engine_init_3d(ctx);
+
+    printf("S3 ViRGE: S3d Engine initialized.\n");
+    printf("  Screen: %dx%d, %d bpp\n", width, height, bpp * 8);
+    printf("  FB base: 0x%x, Z base: 0x%x\n", ctx->fb_base, ctx->z_base);
+
+    return 0;
+}
+
+void virge_cleanup(struct virge_ctx *ctx)
+{
+    virge_wait_engine(ctx);
+
+    /* Unmap the full BAR0 (we offset mmio from the base, so we need
+     * to unmap from the original base address).
+     * ctx->fb still points at the BAR0 base. */
+    if (ctx->fb) {
+        munmap(ctx->fb, ctx->mmio_size);
+        ctx->fb = NULL;
+        ctx->mmio = NULL;
+    }
+    if (ctx->fb_fd >= 0) {
+        close(ctx->fb_fd);
+        ctx->fb_fd = -1;
+    }
+}

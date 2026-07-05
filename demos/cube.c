@@ -145,12 +145,19 @@ int main(int argc, char **argv)
         bpp = atoi(argv[3]) / 8;
     }
 
-    printf("L10GL Gouraud Cube Demo\n");
+    /* Select backend at compile time.
+     * The Makefile defines -DBACKEND_VIRGE or -DBACKEND_MGA1064. */
+#ifdef BACKEND_VIRGE
+    const struct l10gl_backend *backend = &virge_backend;
+#else
+    const struct l10gl_backend *backend = &mga1064_backend;
+#endif
+
+    printf("L10GL Gouraud Cube Demo (backend: %s)\n", backend->name);
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
-    /* Create L10GL context with the mga1064 backend */
     struct l10gl_ctx ctx;
-    if (l10gl_create(&ctx, &mga1064_backend, width, height, bpp) < 0) {
+    if (l10gl_create(&ctx, backend, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
         return 1;
     }

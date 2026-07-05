@@ -200,5 +200,6 @@ int l10gl_has_cap(struct l10gl_ctx *ctx, unsigned int cap);
 
 /* Backend registration (each backend provides one of these) */
 extern const struct l10gl_backend mga1064_backend;
+extern const struct l10gl_backend virge_backend;
 
 #endif /* L10GL_H */
