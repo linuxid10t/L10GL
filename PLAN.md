@@ -38,13 +38,13 @@ a section→PDF-page index and a list of already-verified register facts in
 register code; cite it in comments. Task descriptions below cite PDF page
 numbers of DB019-B where a claim was verified.
 
-## Current state snapshot (2026-07-06, superseding the entry below it)
+## Current state snapshot (2026-07-06)
 
-The "Works (verified)" list further down this section was written before
-a round of direct hardware register probing that found it was too
-optimistic — 2D rect fill and 3D triangles were **not** actually landing
-in the visible framebuffer at that time. Since then, three real bugs were
-found and fixed on real hardware (all committed):
+An earlier version of this snapshot claimed 2D rect fill and 3D
+triangles were hardware-verified. A round of direct hardware register
+probing on 2026-07-06 found that was too optimistic — neither was
+actually landing in the visible framebuffer at that time. Since then,
+three real bugs were found and fixed on real hardware (all committed):
 
 1. **32bpp silently treated as 8bpp.** `virge_init`'s dest_format
    selection (`virge.c` near line 1101) only had cases for bpp 2/3; any
@@ -99,9 +99,9 @@ The cube demo does now render dynamic (frame-to-frame changing) content
 using the fixes above, rather than a static or fully blank screen, but
 is still visually wrong ("flickering top third of the screen" was the
 most recent hardware report) — consistent with, but not yet proven to
-be explained by, the row-ceiling issue above.
+be explained by, the row-ceiling issue above. Two older cube symptoms
+and their diagnoses, neither resolved yet:
 
-Observed hardware symptoms (2026-07), with diagnoses:
 - **Cube renders all black** → color fixed-point scale bug, task V10 (not
   yet applied to code — still open).
 - **Scene repeated ~5 times across the screen** → originally diagnosed as
