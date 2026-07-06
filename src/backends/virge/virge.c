@@ -396,12 +396,16 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
     uint32_t dest_stride = ctx->width * ctx->bpp;
     uint32_t z_stride = ctx->width * 2;  /* 16-bit Z */
 
-    /* Reprogram 2D registers to point at Z buffer instead of framebuffer */
+    /* Reprogram 2D registers to point at Z buffer instead of framebuffer.
+     * Stride is a byte offset (DB019-B PDF p.246); the Z row is width*2
+     * bytes since Z is 16-bit/pixel. Width/clip are in *pixels* (PDF p.235,
+     * p.232) because the fill runs at ctx->dest_format (16bpp) — one pixel
+     * per 16-bit Z word, see the width field below. */
     virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->z_base & ~0x7);
     virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
                   ((z_stride & 0xFFF) << 16) | (z_stride & 0xFFF));
     virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  (0 << 16) | ((ctx->width * 2 - 1) & 0x7FF));
+                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
     virge_write32(ctx, VIRGE_2D_CLIP_T_B,
                   (0 << 16) | ((ctx->height - 1) & 0x7FF));
 
@@ -412,15 +416,24 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
     virge_write32(ctx, VIRGE_2D_MONO_PAT_0, 0xFFFFFFFF);
     virge_write32(ctx, VIRGE_2D_MONO_PAT_1, 0xFFFFFFFF);
 
-    /* Width = width * 2 bytes (since Z is 16-bit), height = screen height */
-    int z_width_bytes = ctx->width * 2;
+    /* Width in pixels (RWIDTH [26:16] is pixels, value 0 = 1 pixel → N-1),
+     * height in lines. The fill runs at ctx->dest_format (16bpp on a
+     * normal run), so one pixel == one 16-bit Z word and a width-pixel
+     * row covers exactly one Z row. The 2D engine's 16bpp mode is
+     * format-agnostic ("RGB1555 or RGB565", DB019-B PDF p.232), so the
+     * raw Z words pass through unmodified. */
     virge_write32(ctx, VIRGE_2D_RWIDTH_HEIGHT,
-                  (((z_width_bytes - 1) & 0x7FF) << 16) |
+                  (((ctx->width - 1) & 0x7FF) << 16) |
                   (ctx->height & 0x7FF));
 
     virge_write32(ctx, VIRGE_2D_RDEST_XY, 0);
 
-    /* Use 8bpp dest format for the fill since we're writing raw bytes.
+    /* Fill at ctx->dest_format (16bpp) with the width in pixels above.
+     * The old code mixed units: it programmed width as width*2 (bytes)
+     * while keeping a 16bpp dest format, so the pixel-based width field
+     * read as 2x the real count and every Z scanline overran into the
+     * next. 16bpp is the format proven for fills (virge_fill_rect) and
+     * the engine writes the low 16 bits of PAT_FG_CLR per pixel.
      * No VIRGE_CMD_CLIP_ENABLE -- see the comment in virge.h. */
     uint32_t cmd = VIRGE_2D_CMD_RECT_FILL
                  | VIRGE_2D_MONO_PATTERN
