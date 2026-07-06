@@ -38,24 +38,78 @@ a section→PDF-page index and a list of already-verified register facts in
 register code; cite it in comments. Task descriptions below cite PDF page
 numbers of DB019-B where a claim was verified.
 
-## Current state snapshot (July 2026)
+## Current state snapshot (2026-07-06, superseding the entry below it)
 
-Works (verified on a real ViRGE):
-- PCI discovery, BAR0 mapping, the full CR40/CR53/CR31/CR66/AFC/S3d-reset
-  enable sequence (`src/backends/virge/virge.c:51`, `virge.c:992`)
-- 2D rectangle fill and Z clear (`virge.c:322`, `virge.c:386`)
-- 3D Gouraud triangle path (`virge.c:473`) — the engine executes and
-  writes pixels, but the output is **not yet visually correct**
+The "Works (verified)" list further down this section was written before
+a round of direct hardware register probing that found it was too
+optimistic — 2D rect fill and 3D triangles were **not** actually landing
+in the visible framebuffer at that time. Since then, three real bugs were
+found and fixed on real hardware (all committed):
+
+1. **32bpp silently treated as 8bpp.** `virge_init`'s dest_format
+   selection (`virge.c` near line 1101) only had cases for bpp 2/3; any
+   other value (including every 32bpp test run against this driver)
+   fell into the 8bpp case, corrupting every width/stride/format
+   register 4x against what the caller and every other register assumed.
+   Now rejected outright with an error (bpp must be 1/2/3 — this chip
+   generation has no 32bpp destination format at all).
+2. **AFC bit 4 (Enable Linear Addressing) was never set** — only bit 0
+   was. Per DB019-B PDF p.22-4/Appendix B.8, bit 4 governs whether the
+   CPU-side BAR0 aperture is linear or legacy-windowed, separate from
+   CR31's ENH_MAP (which only affects the *engine's* own addressing).
+   Now set unconditionally in `virge_init`.
+3. **`CLIP_L_R`/`CLIP_T_B` don't reliably hold freshly written values**
+   (proven the same way `DEST_BASE` was: write a pattern, read it back
+   immediately, get something else). With hardware clipping (CMD_SET
+   bit 1, HC) enabled, every fill degenerated to painting exactly pixel
+   (0,0). Disabling HC (now the case at all 5 CMD_SET call sites) makes
+   fills cover the full rectangle instead. Root cause still open; the
+   frontend is relied on to only submit on-screen coordinates until this
+   is understood and clipping can be restored.
+
+With HC disabled, a real full-rectangle 2D fill was confirmed on hardware
+(exact byte-level pixel matches across many sampled rows/columns) —
+this is the first genuinely verified engine-write-to-visible-VRAM result
+of the project. However, two **new, still-open** issues were found in
+the process, and neither is explained yet:
+
+- **A fixed row-count ceiling around row 298-299**, independent of the
+  requested height (tested at 296 → fills completely; 300 → fills 299 of
+  300; 600 → fills the same ~299 rows and stops at the identical
+  absolute row). Confirmed not a race/timing artifact (identical result
+  after an extra 500ms post-idle sleep) and not a CRTC mode mismatch
+  (direct CR07/CR12 read confirms real VDE=599, i.e. a genuine 600-line
+  active display — so the ceiling isn't "the console is actually
+  shorter than requested").
+- **Narrow widths (96px and 100px) fill almost nothing** (pixel (0,0)
+  only, even with an 8-byte-aligned stride — 96×3=288 rules out the
+  stride-alignment theory), while width 800 fills correctly up to the
+  row ceiling above. The mechanism connecting width to how much of the
+  rectangle actually draws is not yet identified. Needs more hardware
+  probing at a range of widths (e.g. 200, 400, 600) before theorizing
+  further — do not assume this is the same bug as the row ceiling.
+
+Separately, and not yet re-tested against the above fixes: the color
+channel order looked shifted in one test (asked for red 0x00FF0000,
+observed a byte pattern matching pure green) — possibly related to
+V8's 16bpp 1555-vs-565 mismatch, but this was 24bpp, so if it
+reproduces it's a distinct issue worth its own investigation.
+
+The cube demo does now render dynamic (frame-to-frame changing) content
+using the fixes above, rather than a static or fully blank screen, but
+is still visually wrong ("flickering top third of the screen" was the
+most recent hardware report) — consistent with, but not yet proven to
+be explained by, the row-ceiling issue above.
 
 Observed hardware symptoms (2026-07), with diagnoses:
-- **Cube renders all black** → color fixed-point scale bug, task V10.
-- **Scene repeated ~5 times across the screen** → engine stride vs real
-  console pitch mismatch; the driver assumes the console is in the
-  requested mode and that stride = width×bpp. A 1600-byte scanout pitch
-  against the programmed 1280-byte stride shears/wraps the image with a
-  repeat factor of exactly 5. Fixed by P1 (verify/negotiate the fbdev
-  mode, use `line_length` everywhere); confirm by matching the demo
-  arguments to the actual console mode.
+- **Cube renders all black** → color fixed-point scale bug, task V10 (not
+  yet applied to code — still open).
+- **Scene repeated ~5 times across the screen** → originally diagnosed as
+  a pure stride/pitch mismatch (P1). Given the row-ceiling and
+  narrow-width findings above, treat this diagnosis as unconfirmed until
+  re-tested against the three fixes already applied — the repeat/tear
+  pattern may turn out to be the same underlying issue as the new
+  row-ceiling/width finding rather than a separate stride bug.
 
 Written but unverified or known-broken:
 - Textured triangle path (`virge.c:813`) and texture upload/bind glue
