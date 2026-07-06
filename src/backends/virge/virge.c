@@ -991,6 +991,22 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
 
 int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 {
+    /* The S3d engine's destination format field (2D CMD_SET bits 4-2)
+     * only encodes 8/16/24bpp -- there is no 32bpp mode on this chip
+     * generation (confirmed against the datasheet's own render-target
+     * table). Below, any bpp that isn't 2 or 3 silently fell into the
+     * 8bpp case, so a caller requesting 32bpp (4 bytes/pixel) got a
+     * destination format mismatched by 4x against every width/stride
+     * register it also programs, which explains fills and triangles
+     * "completing" per SUBSYS_STATUS while writing to the wrong extent
+     * of VRAM. Reject it explicitly instead of silently corrupting. */
+    if (bpp != 1 && bpp != 2 && bpp != 3) {
+        fprintf(stderr, "S3 ViRGE: unsupported bpp %d (%d bits) -- this "
+                        "chip's engine only supports 8/16/24bpp "
+                        "(bpp 1/2/3), not 32bpp\n", bpp, bpp * 8);
+        return -EINVAL;
+    }
+
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->width = width;
