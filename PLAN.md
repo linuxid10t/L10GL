@@ -38,13 +38,53 @@ a section→PDF-page index and a list of already-verified register facts in
 register code; cite it in comments. Task descriptions below cite PDF page
 numbers of DB019-B where a claim was verified.
 
-## Current state snapshot (2026-07-06)
+## Current state snapshot (2026-07-06, evening)
 
-An earlier version of this snapshot claimed 2D rect fill and 3D
-triangles were hardware-verified. A round of direct hardware register
-probing on 2026-07-06 found that was too optimistic — neither was
-actually landing in the visible framebuffer at that time. Since then,
-three real bugs were found and fixed on real hardware (all committed):
+**The persistent "garbled screen" root cause was found and fixed.** The
+primary test machine has **no fbdev driver at all** (`/dev/fb0` absent
+— nothing owns the card), and the chip was scanning out the
+bootloader's leftover VBE mode: 800×600 raster, CR67 Mode 13, 32-bit
+pixels at pitch 3200 (proven visually by `demos/scantest.c` phase 1).
+Every engine draw at 640×480/16bpp/stride-1280 was therefore noise +
+repetition *by construction*, independent of engine correctness — and
+every prior hardware observation was made through that mismatched
+scanout. Fixes, all committed and hardware-proven via scantest phase 2:
+
+1. **Native scanout takeover** (`virge_scanout_takeover`, `virge.c`):
+   when `/dev/fb0` is absent at 16bpp, virge_init adopts the live CRTC
+   raster (lines from CR12/CR07/CR5E, width from CR01/CR5D ×8) and
+   reprograms only CR67 bits 7-4 → Mode 9 (15-bit 555, matching the 3D
+   engine's ZRGB1555-only output) and pitch via CR13/CR51 (LSW =
+   pitch/4, doubleword rule). BIOS raster timings are kept — no
+   PLL/timing programming. Originals saved and restored at cleanup.
+   This is the P6 slice pulled forward; full modesetting remains P6.
+2. **`virge_wait_vsync` was broken-by-design**: SUBSYS_STATUS bit 0
+   (VSY INT) is a *latched* interrupt status (DB019-B §22, PDF
+   pp.299-301), not a live retrace level — it must be cleared via
+   Subsystem Control VSY CLR before waiting. The old code hung forever
+   on every call after the first. Now clear-then-wait, bounded 250ms.
+3. **Geometry adoption**: the adopted width/height/stride propagate
+   through the glue into `l10gl_ctx`; all demos read the actual
+   geometry back after `l10gl_create`.
+
+Two diagnostic tools now exist and stay: `demos/fbtest.c` (CPU test
+pattern via fbdev — for machines that *have* an fb driver) and
+`demos/scantest.c` (scanout-layout probe over BAR0 + takeover
+experiment; its phase 1 now shows strip C clean since virge_init
+already owns the scanout).
+
+**Likely-resolved, needs one confirming re-test**: the two open
+mysteries below (row ceiling ~299, narrow-width fills) are almost
+certainly artifacts of watching a 1600-byte-stride engine draw through
+a 3200-byte-pitch scanout (600 drawn rows appear as ~300 scanned rows;
+a 96px fill appears as a 48px sliver at 32bpp). The 24bpp "asked red,
+saw green" observation is likewise suspect. Re-run the fill tests once
+on the fixed scanout before closing them in this document.
+
+Older history (kept for context): an earlier snapshot claimed 2D rect
+fill and 3D triangles were hardware-verified; direct register probing
+on 2026-07-06 found that too optimistic. Three real bugs were found
+and fixed on real hardware earlier that day (all committed):
 
 1. **32bpp silently treated as 8bpp.** `virge_init`'s dest_format
    selection (`virge.c` near line 1101) only had cases for bpp 2/3; any
@@ -102,8 +142,8 @@ most recent hardware report) — consistent with, but not yet proven to
 be explained by, the row-ceiling issue above. Two older cube symptoms
 and their diagnoses, neither resolved yet:
 
-- **Cube renders all black** → color fixed-point scale bug, task V10 (not
-  yet applied to code — still open).
+- **Cube renders all black** → color fixed-point scale bug, task V10
+  (since applied — commit `d101112`).
 - **Scene repeated ~5 times across the screen** → originally diagnosed as
   a pure stride/pitch mismatch (P1). Given the row-ceiling and
   narrow-width findings above, treat this diagnosis as unconfirmed until
