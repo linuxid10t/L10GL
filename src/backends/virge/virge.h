@@ -93,7 +93,10 @@
 #define VIRGE_ADV_FUNC_CTRL     0x850C  /* Advanced Function Control (R/W) */
 
 /* Subsystem Status bit definitions */
-#define VIRGE_STATUS_3DBUSY     (1 << 13)  /* S3d Engine busy */
+/* S3d Engine status: bit 13 SET = idle, CLEAR = busy (datasheet §22).
+ * Inverted from what the name might suggest -- do not read this as
+ * "busy when set". */
+#define VIRGE_STATUS_3DIDLE     (1 << 13)
 #define VIRGE_STATUS_VSYNC      (1 << 0)   /* Vertical sync (in retrace) */
 
 /* Advanced Function Control bit definitions.

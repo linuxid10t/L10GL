@@ -58,19 +58,23 @@ static int vga_ensure_new_mmio(void)
     vga_crtc_write(VIRGE_CR39_UNLOCK_REG, VIRGE_CR39_UNLOCK_KEY);
 
     uint8_t cr53 = vga_crtc_read(VIRGE_CR53);
+    printf("S3 ViRGE: CR53 = 0x%02x (MMIO_SELECT = %u)\n",
+           cr53, (cr53 & VIRGE_CR53_MMIO_MASK) >> 3);
     uint8_t cr53_new = (cr53 & ~VIRGE_CR53_MMIO_MASK) | VIRGE_CR53_MMIO_NEW;
     if (cr53_new != cr53) {
-        printf("S3 ViRGE: CR53 was 0x%02x, writing 0x%02x\n", cr53, cr53_new);
+        printf("S3 ViRGE: writing CR53 = 0x%02x\n", cr53_new);
         vga_crtc_write(VIRGE_CR53, cr53_new);
-        uint8_t cr53_check = vga_crtc_read(VIRGE_CR53);
-        printf("S3 ViRGE: CR53 readback: 0x%02x (%s)\n", cr53_check,
-               cr53_check == cr53_new ? "write stuck" : "WRITE DID NOT STICK");
     }
+    uint8_t cr53_check = vga_crtc_read(VIRGE_CR53);
+    printf("S3 ViRGE: CR53 after write = 0x%02x (%s)\n", cr53_check,
+           cr53_check == cr53_new ? "matches target" : "DOES NOT MATCH TARGET");
 
     /* Belt-and-suspenders: CR66 bit 0 is OR'd with AFC bit 0 (either one
      * enables enhanced functions), so set it too. */
     uint8_t cr66 = vga_crtc_read(VIRGE_CR66);
+    printf("S3 ViRGE: CR66 = 0x%02x before write\n", cr66);
     vga_crtc_write(VIRGE_CR66, cr66 | VIRGE_CR66_ENB_EHFC);
+    printf("S3 ViRGE: CR66 = 0x%02x after write\n", vga_crtc_read(VIRGE_CR66));
 
     return 0;
 }
@@ -228,7 +232,7 @@ static void *map_bar0(struct pci_bdf *dev, size_t *size_out)
 
 void virge_wait_engine(struct virge_ctx *ctx)
 {
-    while (virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_3DBUSY)
+    while (!(virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_3DIDLE))
         ;
 }
 
