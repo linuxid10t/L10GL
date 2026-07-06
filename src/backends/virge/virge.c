@@ -951,7 +951,7 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     /* Compute memory layout (byte offsets in VRAM) */
     ctx->fb_base = 0;
     ctx->z_base = width * height * bpp;  /* Z buffer after framebuffer */
-    ctx->vram_size = ctx->fb_size;
+    ctx->vram_size = S3_VIRGE_VRAM_SIZE;
 
     /* Texture heap starts after framebuffer + Z buffer, quadword aligned */
     uint32_t z_size = width * height * 2;  /* Z is always 16-bit */
