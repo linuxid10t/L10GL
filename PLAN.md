@@ -44,7 +44,18 @@ Works (verified on a real ViRGE):
 - PCI discovery, BAR0 mapping, the full CR40/CR53/CR31/CR66/AFC/S3d-reset
   enable sequence (`src/backends/virge/virge.c:51`, `virge.c:992`)
 - 2D rectangle fill and Z clear (`virge.c:322`, `virge.c:386`)
-- 3D Gouraud triangle path (`virge.c:473`) — the cube demo spins
+- 3D Gouraud triangle path (`virge.c:473`) — the engine executes and
+  writes pixels, but the output is **not yet visually correct**
+
+Observed hardware symptoms (2026-07), with diagnoses:
+- **Cube renders all black** → color fixed-point scale bug, task V10.
+- **Scene repeated ~5 times across the screen** → engine stride vs real
+  console pitch mismatch; the driver assumes the console is in the
+  requested mode and that stride = width×bpp. A 1600-byte scanout pitch
+  against the programmed 1280-byte stride shears/wraps the image with a
+  repeat factor of exactly 5. Fixed by P1 (verify/negotiate the fbdev
+  mode, use `line_length` everywhere); confirm by matching the demo
+  arguments to the actual console mode.
 
 Written but unverified or known-broken:
 - Textured triangle path (`virge.c:813`) and texture upload/bind glue
@@ -308,6 +319,25 @@ fix direction is proven. Fix both the Gouraud and textured paths.
 *Acceptance:* a static test triangle renders with correct shape and a
 smooth color ramp on hardware; the spinning cube with per-vertex (not
 per-face) colors shows no shearing or color banding.
+
+### V10. Fix the color fixed-point scale — the all-black-cube bug
+Confirmed against 86Box's pixel pipeline
+(`dest_pixel_gouraud_shaded_triangle`: `channel = value >> 7`, clamped
+to 0–255): the integer part of the S8.7 color format **is the 8-bit
+channel value (0–255)**. The comment at `virge.h:411` ("Normalized
+0.0–1.0 maps to 0–128. The hardware scales to the destination channel
+width internally") is wrong — there is no internal scaling.
+`VIRGE_COLOR_FIXED(x)` multiplies by 128 only, so a fully saturated
+channel programs intensity 1/255: the observed all-black cube rendering
+at 0.4% brightness. Fix: scale by 255·128 (`(int16_t)(x * 32640.0f)`),
+apply identically to color starts and deltas in both triangle paths,
+and correct the header comment. Watch the delta range: gradients can
+now overflow int16 for steep ramps across few pixels — clamp rather
+than wrap.
+
+*Acceptance:* the cube demo shows its six face colors at full
+brightness on hardware; a black-to-white Gouraud ramp spans the full
+range instead of rendering black.
 
 ---
 
@@ -696,9 +726,10 @@ Each item needs before/after frame-rate numbers from the cube demo
 ## Suggested execution order and dependencies
 
 ```
-Phase 0 (V1..V9)  — independent of each other; V7/V8/V9 need HW
+Phase 0 (V1..V10) — independent of each other; V7/V8/V9 need HW
                     sign-off; V9 before V7 (V9 redefines the registers
-                    V7 presteps)
+                    V7 presteps); V10 first — it unblocks seeing
+                    anything at all on hardware
 Phase 1 (F1→F2, F3, F4, F5) — F1 before F2; F3/F4 independent; F5 last
 Phase 2 (X1→X2→X3→X4/X5→X6) — requires F3 for validation
 Phase 3:

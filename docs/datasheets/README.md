@@ -115,6 +115,13 @@ Triangle rasterization semantics derived from its `s3_virge_triangle()`
   likewise along edge 02.
 - Z start (TZS) is treated as S16.15 clamped non-negative; the compare
   uses the integer part (high 16 bits after a 1-bit left shift).
+- **Color scale: the integer part of the S8.7 color format is the 8-bit
+  channel value (0–255)** — the pixel pipeline computes
+  `channel = value >> 7` and clamps to 0–255
+  (`dest_pixel_gouraud_shaded_triangle`). Full intensity is programmed
+  as 255·128 = 32640, *not* 128; there is no internal normalization.
+  The modulate texture-blend path multiplies the 0–255 light value with
+  the texel and shifts right by 8.
 - Command dispatch confirms the datasheet: 3D Gouraud = 0, lit texture
   = 1/5, unlit = 2/6 (perspective variants select perspective-correct
   sampling); texture blend field = {reflection, modulate, decal}. 2D:
