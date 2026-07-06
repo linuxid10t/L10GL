@@ -90,7 +90,10 @@ What to check, in order:
    (50,50), full-width bar at y=300) and then **CPU-reads back** VRAM
    through `ctx->fb` at stride 1600 and prints pass/fail per corner —
    plus a photo. That separates "engine writes wrong address/stride"
-   from "engine doesn't run".
+   from "engine doesn't run". **Implemented as `demos/filltest.c` — run
+   `sudo ./filltest`**; it also probes the PLAN's suspected "row ceiling
+   ~299" (full-height R3 strip) and "narrow-width fills nothing" (R1/R3)
+   on the fixed scanout.
 2. The engine register programming after the takeover: `engine_init_3d`
    and every 2D op program `VIRGE_2D/3D_DEST_SRC_STR` with
    `ctx->stride` (1600) and clip/width with `ctx->width/height`
@@ -119,6 +122,10 @@ What to check, in order:
   (C = 555/1600 must be the clean one); phase 2: full-screen CPU
   pattern at adopted geometry. No engine involvement.
 - `sudo ./triangle`, `./cube` — engine paths (2D clear + Z-clear + 3D).
+- `sudo ./filltest` — symptom-2 2D-fill readback: programs known rects via
+  `virge_fill_rect`, CPU-reads VRAM back at corners/center, prints pass/fail
+  + a bounding-box locater if a color lands wrong. Run first before any
+  engine-code change for symptom 2.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump

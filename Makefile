@@ -61,5 +61,10 @@ fbtest: demos/fbtest.c
 scantest: demos/scantest.c src/backends/virge/virge.c src/backends/virge/virge.h
 	$(CC) $(CFLAGS) -o $@ demos/scantest.c src/backends/virge/virge.c $(LDFLAGS)
 
+# Diagnostic: 2D engine fill readback test (symptom 2). Virge-specific,
+# links only the chip driver (no frontend); CPU-reads VRAM after fills.
+filltest: demos/filltest.c src/backends/virge/virge.c src/backends/virge/virge.h
+	$(CC) $(CFLAGS) -o $@ demos/filltest.c src/backends/virge/virge.c $(LDFLAGS)
+
 clean:
 	rm -f $(DEMOS) *.o src/*.o src/backends/*/*.o
