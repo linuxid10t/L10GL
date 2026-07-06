@@ -302,11 +302,14 @@ static void engine_init_3d(struct virge_ctx *ctx)
     /* Z_STRIDE */
     virge_write32(ctx, VIRGE_3D_Z_STRIDE, z_stride & 0xFFF);
 
-    /* Clip to full screen */
+    /* Clip to full screen. Left/top = 0 in the upper field, right/bottom
+     * = dimension-1 in the lower field -- these were previously swapped,
+     * producing a degenerate (left > right) clip rectangle that
+     * silently rejected every pixel regardless of any other setting. */
     virge_write32(ctx, VIRGE_3D_CLIP_L_R,
-                  ((ctx->width - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
     virge_write32(ctx, VIRGE_3D_CLIP_T_B,
-                  ((ctx->height - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
 }
 
 /* ========================================================================
@@ -327,10 +330,12 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
     virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
     virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
                   ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+    /* Left/top = 0, right/bottom = dimension-1 (see engine_init_3d for
+     * why this ordering, not the reverse, matters). */
     virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  ((ctx->width - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
     virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  ((ctx->height - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
 
     /* Foreground color = fill color */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
@@ -396,9 +401,9 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
     virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
                   ((z_stride & 0xFFF) << 16) | (z_stride & 0xFFF));
     virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  ((ctx->width * 2 - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->width * 2 - 1) & 0x7FF));
     virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  ((ctx->height - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
 
     /* Fill color = the Z value repeated */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, z_color);
@@ -697,9 +702,9 @@ void virge_draw_line(struct virge_ctx *ctx,
     virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
                   ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
     virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  ((ctx->width - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
     virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  ((ctx->height - 1) << 16) | 0);
+                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
 
     /* Foreground color */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
