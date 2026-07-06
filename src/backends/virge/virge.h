@@ -346,7 +346,11 @@
 
 /* Bits 4-2: DEST FORMAT - Destination Color Format */
 #define VIRGE_DEST_8BPP         (0 << 2)   /* 8 bits/pixel palettized */
-#define VIRGE_DEST_16BPP        (1 << 2)   /* 16 bits/pixel (ZRGB1555) */
+/* 16bpp destination. The 3D engine writes ZRGB1555 ONLY (DB019-B p.250);
+ * there is no 565 triangle path. Scanout must therefore be CR67 Mode 9
+ * (15-bit/RGB555) or triangles decode wrong — virge_init enforces this
+ * (V8). The 2D engine at this format is RGB1555-or-RGB565 agnostic (p.232). */
+#define VIRGE_DEST_16BPP        (1 << 2)
 #define VIRGE_DEST_24BPP        (2 << 2)   /* 24 bits/pixel (RGB888) */
 
 /* Bits 7-5: TEX CLR FORMAT (texture — not used for Gouraud) */

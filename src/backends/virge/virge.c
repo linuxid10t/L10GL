@@ -1141,6 +1141,95 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     ctx->fb_fd = -1;
     ctx->bar_fd = -1;
 
+    /*
+     * Adopt the console mode early, before any PCI/MMIO work, so a depth
+     * change routed through the kernel fbdev driver settles before our own
+     * register programming runs.
+     *
+     * (V8) At 16bpp the S3d 3D engine's destination format is ZRGB1555
+     * ONLY (3D CMD_SET, DB019-B PDF p.250) — there is no 565 triangle
+     * path. The 2D engine is format-agnostic (p.232) and scanout is chosen
+     * separately by CR67 bits 7-4 (Mode 9 = 15-bit/555, Mode 10 =
+     * 16-bit/565, p.216). For 3D colors to scan out correctly the console
+     * must be 555; on a 565 console every triangle is written 555 and
+     * decoded 565 (green shifted, hues wrong — the "black/magenta/
+     * stippled" triangle symptom that surfaced once V10 made colors
+     * visible). Read the live layout; if it's 565, request the 555
+     * equivalent via fbdev (s3fb accepts this; fixed-mode vesafb/simplefb
+     * refuse). Native CR67 programming is task P6; until then refuse a
+     * mismatched mode rather than ship wrong colors.
+     */
+    ctx->fb_fd = open("/dev/fb0", O_RDWR);
+    if (ctx->fb_fd >= 0) {
+        struct fb_fix_screeninfo finfo;
+        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0)
+            ctx->fb_size = finfo.smem_len;
+        else
+            ctx->fb_size = width * height * bpp;
+
+        if (bpp == 2) {
+            struct fb_var_screeninfo vinfo;
+            if (ioctl(ctx->fb_fd, FBIOGET_VSCREENINFO, &vinfo) == 0) {
+                printf("  FB var: %ux%u, %u bpp, green.length=%u (%s)\n",
+                       vinfo.xres, vinfo.yres, vinfo.bits_per_pixel,
+                       vinfo.green.length,
+                       vinfo.green.length == 6 ? "RGB565" : "RGB555");
+
+                if (vinfo.green.length == 6) {
+                    /* 565 console — request the 555 equivalent. Copy the
+                     * whole mode and touch only depth + color bitfields;
+                     * 15bpp is still 2 bytes/pixel, so the stride is
+                     * unchanged. */
+                    struct fb_var_screeninfo v555 = vinfo;
+                    v555.bits_per_pixel = 15;
+                    v555.red    = (struct fb_bitfield){ .offset = 10, .length = 5 };
+                    v555.green  = (struct fb_bitfield){ .offset =  5, .length = 5 };
+                    v555.blue   = (struct fb_bitfield){ .offset =  0, .length = 5 };
+                    v555.transp = (struct fb_bitfield){ .offset = 15, .length = 1 };
+
+                    int switched =
+                        (ioctl(ctx->fb_fd, FBIOPUT_VSCREENINFO, &v555) == 0) &&
+                        (ioctl(ctx->fb_fd, FBIOGET_VSCREENINFO, &vinfo) == 0) &&
+                        (vinfo.green.length != 6);
+                    if (switched) {
+                        printf("  FB var: switched to RGB555 (green.length=%u, "
+                               "%u bpp) for 3D color correctness (V8)\n",
+                               vinfo.green.length, vinfo.bits_per_pixel);
+                    } else {
+                        fprintf(stderr,
+                            "S3 ViRGE: console is RGB565 but the 3D engine "
+                            "writes RGB555 only (DB019-B p.250), so every\n"
+                            "  triangle would scan out with shifted/wrong "
+                            "colors. Switching to 15bpp via fbdev was refused "
+                            "or ignored\n"
+                            "  (typical of a fixed-mode vesafb/simplefb "
+                            "console; s3fb would accept it). Re-run on a 555 "
+                            "console — e.g. boot\n"
+                            "  s3fb at 15bpp, or `fbset -rgba 5,5,5,1` — or "
+                            "wait for native mode setting (P6).\n");
+                        close(ctx->fb_fd);
+                        ctx->fb_fd = -1;
+                        return -EINVAL;
+                    }
+                }
+            } else {
+                fprintf(stderr,
+                    "S3 ViRGE: FBIOGET_VSCREENINFO failed; cannot verify "
+                    "16bpp is RGB555 (the 3D engine writes 555 only).\n"
+                    "  If the console is 565, triangle colors will be "
+                    "shifted/wrong (V8).\n");
+            }
+        }
+    } else {
+        ctx->fb_size = width * height * bpp;
+        if (bpp == 2) {
+            fprintf(stderr,
+                "S3 ViRGE: /dev/fb0 unavailable; cannot verify/enforce "
+                "RGB555 scanout at 16bpp (V8). If the console is 565,\n"
+                "  triangle colors will be shifted/wrong.\n");
+        }
+    }
+
     /* Find the S3 ViRGE on the PCI bus */
     struct pci_bdf pci = {0};
     static const uint16_t virge_devices[] = S3_PCI_DEVICE_VIRGE_ALL;
@@ -1213,19 +1302,6 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                (afc_check & VIRGE_AFC_LINEAR_ADDR) ? "set" : "NOT SET");
         uint32_t status_check = virge_read32(ctx, VIRGE_SUBSYS_STATUS);
         printf("S3 ViRGE: SUBSYS_STATUS readback: 0x%08x\n", status_check);
-    }
-
-    /* Try to get framebuffer size from /dev/fb0 if available */
-    ctx->fb_fd = open("/dev/fb0", O_RDWR);
-    if (ctx->fb_fd >= 0) {
-        struct fb_fix_screeninfo finfo;
-        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            ctx->fb_size = finfo.smem_len;
-        } else {
-            ctx->fb_size = width * height * bpp;
-        }
-    } else {
-        ctx->fb_size = width * height * bpp;
     }
 
     /* Compute memory layout (byte offsets in VRAM).

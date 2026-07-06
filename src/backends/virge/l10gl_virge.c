@@ -21,13 +21,21 @@
  * Color conversion helpers
  * ======================================================================== */
 
-/* Convert float RGB (0..1) to 16bpp 5:6:5 */
-static uint16_t rgb_to_565(float r, float g, float b)
+/* Pack float RGB (0..1) to 16bpp RGB555 (alpha bit 15 = 0).
+ *
+ * V8: at 16bpp the S3d 3D engine's destination format is ZRGB1555 ONLY
+ * (3D CMD_SET, DB019-B PDF p.250), and virge_init forces RGB555 scanout
+ * so triangles scan out correctly. The 2D engine is format-agnostic
+ * (p.232), so 2D fills MUST pack the same 555 layout the 3D path writes
+ * — packing 565 here while triangles write 555 is exactly the V8 bug
+ * (fills and triangle ramps disagree, green shifted). virge_init
+ * guarantees 555 at 16bpp, so this is 555 unconditionally. */
+static uint16_t rgb_to_555(float r, float g, float b)
 {
     int ri = (int)(r * 31.0f + 0.5f) & 0x1F;
-    int gi = (int)(g * 63.0f + 0.5f) & 0x3F;
+    int gi = (int)(g * 31.0f + 0.5f) & 0x1F;
     int bi = (int)(b * 31.0f + 0.5f) & 0x1F;
-    return (ri << 11) | (gi << 5) | bi;
+    return (ri << 10) | (gi << 5) | bi;
 }
 
 /* Convert float RGB (0..1) to 24bpp RGB888 packed in uint32 */
@@ -260,7 +268,7 @@ static void virge_be_clear_color(struct l10gl_ctx *ctx, float r, float g, float 
     uint32_t color;
 
     if (priv->hw.bpp == 2)
-        color = rgb_to_565(r, g, b);
+        color = rgb_to_555(r, g, b);
     else
         color = rgb_to_888(r, g, b);
 
@@ -368,7 +376,7 @@ static void virge_be_draw_line(struct l10gl_ctx *ctx,
     uint32_t color;
 
     if (priv->hw.bpp == 2)
-        color = rgb_to_565(v0.r, v0.g, v0.b);
+        color = rgb_to_555(v0.r, v0.g, v0.b);
     else
         color = rgb_to_888(v0.r, v0.g, v0.b);
 
