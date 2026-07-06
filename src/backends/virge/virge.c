@@ -347,7 +347,7 @@ void virge_wait_vsync(struct virge_ctx *ctx)
 
 static void engine_init_3d(struct virge_ctx *ctx)
 {
-    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
     uint32_t z_stride = ctx->width * 2;  /* Z is always 16-bit */
 
     /* DEST_BASE: framebuffer origin in VRAM */
@@ -387,7 +387,7 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
 {
     virge_wait_engine(ctx);
 
-    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
 
     /* Set destination base and stride for the 2D bank */
     virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
@@ -456,7 +456,7 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
     uint16_t z_val = (uint16_t)(z * 65535.0f);
     uint32_t z_color = (z_val) | (z_val << 16);  /* pack for stride fill */
 
-    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
     uint32_t z_stride = ctx->width * 2;  /* 16-bit Z */
 
     /* Reprogram 2D registers to point at Z buffer instead of framebuffer.
@@ -796,7 +796,7 @@ void virge_draw_line(struct virge_ctx *ctx,
 
     /* Y START = y0 (the bottom point, which has the largest Y) */
 
-    uint32_t dest_stride = ctx->width * ctx->bpp;
+    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
 
     /* Set up 2D registers for line draw bank */
     virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
@@ -1162,10 +1162,20 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     ctx->fb_fd = open("/dev/fb0", O_RDWR);
     if (ctx->fb_fd >= 0) {
         struct fb_fix_screeninfo finfo;
-        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0)
+        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
             ctx->fb_size = finfo.smem_len;
-        else
+            /* Real framebuffer pitch (P1). The engine's destination stride
+             * MUST equal the scanout pitch or the image shears and tiles
+             * diagonally ("multiple triangles"). fbdev can pad the pitch
+             * past width*bpp, and the caller's width can mismatch the
+             * actual console resolution -- so trust line_length, not the
+             * width*bpp guess every stride site used before this fix. */
+            ctx->stride = finfo.line_length ? finfo.line_length
+                                            : (uint32_t)width * bpp;
+        } else {
             ctx->fb_size = width * height * bpp;
+            ctx->stride = (uint32_t)width * bpp;
+        }
 
         if (bpp == 2) {
             struct fb_var_screeninfo vinfo;
@@ -1222,6 +1232,7 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
         }
     } else {
         ctx->fb_size = width * height * bpp;
+        ctx->stride = (uint32_t)width * bpp;
         if (bpp == 2) {
             fprintf(stderr,
                 "S3 ViRGE: /dev/fb0 unavailable; cannot verify/enforce "
@@ -1229,6 +1240,12 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                 "  triangle colors will be shifted/wrong.\n");
         }
     }
+
+    /* Diagnostic: if these two differ, the old width*bpp stride was wrong
+     * (padded pitch and/or a console resolution other than the caller's
+     * request) -- the "multiple triangles" / sheared-tile symptom. */
+    printf("  FB stride (line_length): %u bytes/scanline; width*bpp guess = %u\n",
+           ctx->stride, (unsigned)((uint32_t)width * bpp));
 
     /* Find the S3 ViRGE on the PCI bus */
     struct pci_bdf pci = {0};

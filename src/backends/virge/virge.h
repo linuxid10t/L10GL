@@ -506,6 +506,13 @@ struct virge_ctx {
     int     width;          /* Screen width in pixels */
     int     height;         /* Screen height in pixels */
     int     bpp;            /* Bytes per pixel (NOT bits!) */
+    uint32_t stride;        /* Framebuffer pitch (bytes/scanline), from fbdev
+                             * finfo.line_length (P1). The engine's dest
+                             * stride MUST equal the scanout pitch or the
+                             * image shears/tiles ("multiple triangles").
+                             * width*bpp is only right when the console
+                             * resolution and pitch padding happen to match
+                             * the caller's request. */
 
     /* Memory layout (byte offsets in VRAM) */
     uint32_t fb_base;       /* Framebuffer base address (normally 0) */
