@@ -522,6 +522,13 @@ struct virge_ctx {
                              * resolution and pitch padding happen to match
                              * the caller's request. */
 
+    /* Native scanout takeover (no-fbdev machines): original CRTC
+     * values, restored by virge_cleanup. */
+    int      scanout_owned;
+    uint8_t  saved_cr67;
+    uint8_t  saved_cr13;
+    uint8_t  saved_cr51;
+
     /* Memory layout (byte offsets in VRAM) */
     uint32_t fb_base;       /* Framebuffer base address (normally 0) */
     uint32_t z_base;        /* Z-buffer base address (after framebuffer) */

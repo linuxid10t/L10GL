@@ -35,6 +35,14 @@
  *
  * Build: make scantest       (always builds against the virge backend)
  * Run:   sudo ./scantest
+ *
+ * HISTORICAL NOTE (2026-07-06): this tool did its job -- phase 1 named
+ * strip A (32-bit/3200) as the leftover VBE layout and phase 2 proved
+ * the Mode 9 takeover. virge_init now performs that takeover itself on
+ * no-fbdev machines, so when run today, virge_init has ALREADY switched
+ * scanout to 555/pitch-1600 before phase 1 draws: strip C is the one
+ * that renders clean, and phase 2 is a no-op re-program. Kept as a
+ * scanout-layout probe for future machines/cards.
  */
 
 #include <stdio.h>

@@ -230,6 +230,12 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
         return ret;
     }
 
+    /* virge_init may adopt the real raster instead of the request
+     * (native scanout takeover on no-fbdev machines) -- report the
+     * actual geometry so demos render to the true screen size. */
+    ctx->width = priv->hw.width;
+    ctx->height = priv->hw.height;
+
     /* Defaults */
     priv->depth_test_enabled = 1;
     priv->depth_writes_enabled = 1;

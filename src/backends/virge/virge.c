@@ -308,6 +308,74 @@ static void virge_dump_crtc_truth(struct virge_ctx *ctx)
                "from what is scanned out\n");
 }
 
+/*
+ * Native scanout takeover, for machines with no fbdev driver bound to
+ * the card. Observed on the primary test machine: /dev/fb0 absent, the
+ * chip left scanning the bootloader's VBE mode — 800x600 raster, CR67
+ * Mode 13, 32-bit pixels at pitch 3200 (proven by scantest phase 1).
+ * With no kernel driver there is nothing to ioctl, so the V8 fbdev
+ * depth switch can never run; the driver owns the scanout itself.
+ *
+ * Strategy (proven end-to-end by scantest phase 2, 2026-07-06): keep
+ * the BIOS raster timings — they are valid and locked to the monitor,
+ * so no PLL/timing programming — adopt their geometry, and reprogram
+ * only:
+ *   - CR67 bits 7-4 = Mode 9, 15-bit 555 (DB019-B PDF p.216), matching
+ *     the 3D engine's ZRGB1555-only 16bpp output (V8) and the glue's
+ *     555 packing. Modes 9/10/13 are all 1 pixel/VCLK, which is why the
+ *     color-mode switch does not disturb the raster.
+ *   - Pitch = width*2 bytes via CR13 + CR51 bits 5-4, LSW = pitch/4
+ *     under the doubleword rule (CR31 bit 3 is set by our init).
+ *     LSW=400 at 800 wide rendered clean in scantest phase 2.
+ * Writes happen during vertical retrace; originals are saved in ctx and
+ * restored by virge_cleanup.
+ *
+ * Geometry is adopted from the CRTC itself: active lines from
+ * CR12/CR07/CR5E, active width from CR01/CR5D in character clocks
+ * (x8 pixels at 1 pixel/VCLK).
+ *
+ * Requires vga_ensure_new_mmio() (port access + unlocks) and the S3d
+ * enable sequence (virge_wait_vsync reads SUBSYS_STATUS over MMIO).
+ */
+static void virge_scanout_takeover(struct virge_ctx *ctx)
+{
+    uint8_t cr01 = vga_crtc_read(0x01);
+    uint8_t cr07 = vga_crtc_read(0x07);
+    uint8_t cr12 = vga_crtc_read(0x12);
+    uint8_t cr5d = vga_crtc_read(0x5D);
+    uint8_t cr5e = vga_crtc_read(0x5E);
+
+    uint32_t lines = (cr12 | (uint32_t)((cr07 >> 1) & 1) << 8
+                           | (uint32_t)((cr07 >> 6) & 1) << 9
+                           | (uint32_t)((cr5e >> 1) & 1) << 10) + 1;
+    uint32_t width = ((cr01 | (uint32_t)((cr5d >> 1) & 1) << 8) + 1) * 8;
+
+    printf("S3 ViRGE: native scanout takeover: adopting the live %ux%u "
+           "raster (caller requested %dx%d), 555 @ pitch %u\n",
+           width, lines, ctx->width, ctx->height, width * 2);
+
+    ctx->width = (int)width;
+    ctx->height = (int)lines;
+    ctx->stride = width * 2;
+    ctx->fb_size = ctx->stride * lines;
+
+    ctx->saved_cr67 = vga_crtc_read(0x67);
+    ctx->saved_cr13 = vga_crtc_read(0x13);
+    ctx->saved_cr51 = vga_crtc_read(0x51);
+
+    uint32_t lsw = ctx->stride / 4;   /* doubleword rule: pitch = LSW*4 */
+    virge_wait_vsync(ctx);
+    vga_crtc_write(0x67, (uint8_t)((ctx->saved_cr67 & 0x0F) | (0x3 << 4)));
+    vga_crtc_write(0x13, (uint8_t)(lsw & 0xFF));
+    vga_crtc_write(0x51, (uint8_t)((ctx->saved_cr51 & ~0x30) |
+                                   (((lsw >> 8) & 3) << 4)));
+    ctx->scanout_owned = 1;
+
+    printf("S3 ViRGE: scanout now CR67=%02x (Mode 9/555) CR13=%02x "
+           "CR51=%02x; originals restored at cleanup\n",
+           vga_crtc_read(0x67), vga_crtc_read(0x13), vga_crtc_read(0x51));
+}
+
 /* ========================================================================
  * PCI Discovery — find the S3 ViRGE via /sys/bus/pci/devices
  *
@@ -1385,10 +1453,10 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
         ctx->fb_size = width * height * bpp;
         ctx->stride = (uint32_t)width * bpp;
         if (bpp == 2) {
-            fprintf(stderr,
-                "S3 ViRGE: /dev/fb0 unavailable; cannot verify/enforce "
-                "RGB555 scanout at 16bpp (V8). If the console is 565,\n"
-                "  triangle colors will be shifted/wrong.\n");
+            printf("S3 ViRGE: /dev/fb0 unavailable -- no kernel fb driver "
+                   "owns the card. Will adopt the live CRTC raster and\n"
+                   "  take over scanout natively (Mode 9/555) after chip "
+                   "init.\n");
         }
     }
 
@@ -1477,16 +1545,26 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
         printf("S3 ViRGE: SUBSYS_STATUS readback: 0x%08x\n", status_check);
     }
 
+    /* No fbdev driver on the card: nothing set (or will ever set) a
+     * matching scanout, so adopt the live raster and own the scanout
+     * format/pitch ourselves. Placed after the S3d enable sequence
+     * because the takeover's vsync wait reads SUBSYS_STATUS. Only the
+     * 16bpp path is supported natively (Mode 9/555 -- see V8). */
+    if (ctx->fb_fd < 0 && bpp == 2)
+        virge_scanout_takeover(ctx);
+
     /* Compute memory layout (byte offsets in VRAM).
      * VRAM size is detected from the CR36 straps (virge_detect_vram);
      * texture allocation checks against this, so an under-detected size
-     * just refuses large textures rather than over-allocating. */
+     * just refuses large textures rather than over-allocating.
+     * ctx->width/height, not the caller's request: the takeover above
+     * may have adopted the real raster. */
     ctx->fb_base = 0;
-    ctx->z_base = width * height * bpp;  /* Z buffer after framebuffer */
+    ctx->z_base = ctx->width * ctx->height * bpp;  /* Z after framebuffer */
     ctx->vram_size = virge_detect_vram(pci.device_id);
 
     /* Texture heap starts after framebuffer + Z buffer, quadword aligned */
-    uint32_t z_size = width * height * 2;  /* Z is always 16-bit */
+    uint32_t z_size = ctx->width * ctx->height * 2;  /* Z is always 16-bit */
     ctx->tex_heap_next = ctx->z_base + z_size;
     ctx->tex_heap_next = (ctx->tex_heap_next + 7) & ~7;  /* QW align */
     ctx->tex_cmd_bits = 0;
@@ -1515,7 +1593,8 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     engine_init_3d(ctx);
 
     printf("S3 ViRGE: S3d Engine initialized.\n");
-    printf("  Screen: %dx%d, %d bpp\n", width, height, bpp * 8);
+    printf("  Screen: %dx%d, %d bpp (stride %u)\n",
+           ctx->width, ctx->height, bpp * 8, ctx->stride);
     printf("  FB base: 0x%x, Z base: 0x%x\n", ctx->fb_base, ctx->z_base);
 
     return 0;
@@ -1524,6 +1603,19 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 void virge_cleanup(struct virge_ctx *ctx)
 {
     virge_wait_engine(ctx);
+
+    /* Give back a scanout we took over (native no-fbdev path) so the
+     * console returns to its previous state. Before the unmap below:
+     * the vsync wait reads SUBSYS_STATUS over MMIO. */
+    if (ctx->scanout_owned && ctx->mmio) {
+        printf("S3 ViRGE: restoring scanout CR67=%02x CR13=%02x CR51=%02x\n",
+               ctx->saved_cr67, ctx->saved_cr13, ctx->saved_cr51);
+        virge_wait_vsync(ctx);
+        vga_crtc_write(0x67, ctx->saved_cr67);
+        vga_crtc_write(0x13, ctx->saved_cr13);
+        vga_crtc_write(0x51, ctx->saved_cr51);
+        ctx->scanout_owned = 0;
+    }
 
     /* Unmap the full BAR0 (we offset mmio from the base, so we need
      * to unmap from the original base address).
