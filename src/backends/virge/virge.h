@@ -142,6 +142,26 @@
 #define VIRGE_CR66               0x66   /* Mirrors AFC bit 0 (ENB EHFC) */
 #define VIRGE_CR66_ENB_EHFC      (1 << 0)
 
+/* CR40 "System Configuration Register" bit 0: Enable Enhanced Register
+ * Access. This is upstream of CR53/CR66 -- if clear, the entire S3d
+ * register bank (0xA400-0xB5FF, and likely 0x8500) doesn't exist as
+ * far as the chip's register decode is concerned: reads are undefined
+ * and writes are dropped, regardless of what CR53/CR66/AFC say.
+ * Power-on default is 0 -- BIOS normally sets it during POST, but a
+ * warm reset or a boot path that skips real VGA BIOS execution (e.g.
+ * UEFI GOP handoff) can leave it clear. */
+#define VIRGE_CR40               0x40
+#define VIRGE_CR40_EN_ENH        (1 << 0)
+
+/* The register at MMIO offset 0x8504 is Subsystem STATUS on read, but
+ * a completely different write-only Subsystem CONTROL register on
+ * write. Bits 15-14 of the control register are "S3d RST": writing
+ * 10b resets the S3d engine, 01b enables it. This is a required
+ * one-time init step, separate from CR40/CR53/CR66/AFC. */
+#define VIRGE_SUBSYS_CONTROL     0x8504
+#define VIRGE_SSC_S3D_RESET      (2 << 14)
+#define VIRGE_SSC_S3D_ENABLE     (1 << 14)
+
 /* ========================================================================
  * 2D Register Bank — BitBLT / Rectangle Fill
  * Base offset: 0xA400 (from MMIO region)

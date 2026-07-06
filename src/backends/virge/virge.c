@@ -57,6 +57,18 @@ static int vga_ensure_new_mmio(void)
     vga_crtc_write(VIRGE_CR38_UNLOCK_REG, VIRGE_CR38_UNLOCK_KEY);
     vga_crtc_write(VIRGE_CR39_UNLOCK_REG, VIRGE_CR39_UNLOCK_KEY);
 
+    /* CR40 bit 0 gates the existence of the entire S3d register bank
+     * from the chip's register decode -- upstream of CR53/CR66/AFC.
+     * If clear, everything past this point is a no-op regardless of
+     * what CR53/CR66/AFC say. */
+    uint8_t cr40 = vga_crtc_read(VIRGE_CR40);
+    printf("S3 ViRGE: CR40 = 0x%02x (EN_ENH = %u)\n", cr40, cr40 & VIRGE_CR40_EN_ENH);
+    if (!(cr40 & VIRGE_CR40_EN_ENH)) {
+        printf("S3 ViRGE: CR40 bit 0 was CLEAR -- setting it\n");
+        vga_crtc_write(VIRGE_CR40, cr40 | VIRGE_CR40_EN_ENH);
+    }
+    printf("S3 ViRGE: CR40 after write = 0x%02x\n", vga_crtc_read(VIRGE_CR40));
+
     uint8_t cr53 = vga_crtc_read(VIRGE_CR53);
     printf("S3 ViRGE: CR53 = 0x%02x (MMIO_SELECT = %u)\n",
            cr53, (cr53 & VIRGE_CR53_MMIO_MASK) >> 3);
@@ -1014,6 +1026,14 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                         "(need root): %s\n", strerror(-ret));
         return ret;
     }
+
+    /* S3d Engine software reset/enable sequence. MM8504 is Subsystem
+     * STATUS on read but a completely different write-only Subsystem
+     * CONTROL register on write; bits 15-14 there reset (10b) then
+     * enable (01b) the engine. This is a required one-time init step
+     * independent of CR40/CR53/CR66/AFC. */
+    virge_write32(ctx, VIRGE_SUBSYS_CONTROL, VIRGE_SSC_S3D_RESET);
+    virge_write32(ctx, VIRGE_SUBSYS_CONTROL, VIRGE_SSC_S3D_ENABLE);
 
     /* Enable the 8514/A-compatible accelerated register interface.
      * Without this, the 2D/3D command bank silently ignores all writes
