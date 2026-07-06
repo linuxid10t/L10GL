@@ -347,13 +347,21 @@
  *   2D Polygon:  bits [29:27] = 101
  *
  * For rectangle fill, the key bits are:
- *   bit 28: rectangle fill select
+ *   bits 30-27: 2D command type, 0010 = rectangle fill (0x10000000, which
+ *               happens to equal "bit 28 set" only because the other 3
+ *               bits of this field are 0 for this particular command --
+ *               it is a 4-bit enum, not an independent flag bit)
  *   bits 24-17: ROP (raster operation, 8-bit)
  *   bit 8: mono pattern (forced to 1, selects PAT_FG_CLR)
- *   bits 7-5: destination format (same as 3D)
+ *   bit 5: DE (Draw Enable) -- 0 = compute only, do not write any
+ *          pixels; 1 = actually write pixels. Without this bit set,
+ *          the engine dispatches and completes the command (visible
+ *          in SUBSYS_STATUS) but VRAM is never touched.
+ *   bits 4-2: destination format
  * ======================================================================== */
 
-#define VIRGE_2D_CMD_RECT_FILL  (1 << 28)
+#define VIRGE_2D_CMD_RECT_FILL  (2 << 27)
+#define VIRGE_2D_CMD_DRAW_ENABLE (1 << 5)
 #define VIRGE_2D_MONO_PATTERN   (1 << 8)
 
 /* ROP codes (Microsoft ROP3 convention) */

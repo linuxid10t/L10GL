@@ -324,14 +324,17 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
 
     /*
      * Command Set for rectangle fill:
-     *   bit 28: rectangle fill
+     *   bits 30-27: rectangle fill (0010)
      *   bit 8: mono pattern (forced, selects PAT_FG_CLR)
-     *   bits 7-5: destination format
+     *   bit 5: draw enable (without this, the engine computes but
+     *          never writes a single pixel)
+     *   bits 4-2: destination format
      *   bits 24-17: ROP = PATCOPY (0xF0)
      *   bit 1: clipping enabled
      */
     uint32_t cmd = VIRGE_2D_CMD_RECT_FILL
                  | VIRGE_2D_MONO_PATTERN
+                 | VIRGE_2D_CMD_DRAW_ENABLE
                  | ctx->dest_format
                  | (VIRGE_ROP_PATCOPY << 17)
                  | VIRGE_CMD_CLIP_ENABLE;
@@ -387,6 +390,7 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
     /* Use 8bpp dest format for the fill since we're writing raw bytes */
     uint32_t cmd = VIRGE_2D_CMD_RECT_FILL
                  | VIRGE_2D_MONO_PATTERN
+                 | VIRGE_2D_CMD_DRAW_ENABLE
                  | ctx->dest_format
                  | (VIRGE_ROP_PATCOPY << 17)
                  | VIRGE_CMD_CLIP_ENABLE;
