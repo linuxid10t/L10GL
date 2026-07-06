@@ -168,6 +168,14 @@ void l10gl_draw_textured_triangle(struct l10gl_ctx *ctx,
     ctx->backend->draw_textured_triangle(ctx, v0, v1, v2);
 }
 
+void l10gl_draw_line(struct l10gl_ctx *ctx,
+                      struct l10gl_vertex v0,
+                      struct l10gl_vertex v1)
+{
+    if (ctx->backend->draw_line)
+        ctx->backend->draw_line(ctx, v0, v1);
+}
+
 void l10gl_draw_rect(struct l10gl_ctx *ctx,
                      int x, int y, int w, int h, uint32_t color)
 {
