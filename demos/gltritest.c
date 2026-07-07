@@ -65,25 +65,6 @@ static void draw_demo_triangle(struct virge_ctx *ctx, int W, int H)
     virge_draw_triangle_gouraud(ctx, v_red, v_green, v_blue);
 }
 
-/* Sample the Z buffer at the first triangle pixel of every 20th row. After a
- * draw with ZUP, the Z buffer holds the triangle's Zs where it passed and the
- * cleared 0xFFFF where it failed, so this prints Zs vs Y directly -- revealing
- * whether Zs drifted up toward 0xFFFF or stayed flat at ~0x4000. */
-static void dump_z_profile(int W, int H, uint32_t stride,
-                           const uint8_t *vram, const uint8_t *zram)
-{
-    for (int y = 0; y < H; y += 20) {
-        int x_hit = -1;
-        for (int x = 0; x < W; x++) {
-            if (read_px(vram, stride, x, y)) { x_hit = x; break; }
-        }
-        if (x_hit < 0)
-            continue;
-        uint16_t z = read_px(zram, stride, x_hit, y);
-        printf("    y=%3d x=%3d  Z=0x%04x\n", y, x_hit, z);
-    }
-}
-
 /* Read the Z buffer at a fixed X column across sampled rows. Used to check
  * whether virge_clear_z actually wrote 0xFFFF to every row: the compare uses
  * the S16.15 integer part (Zs compares as 0 for z<1), so LESS fails wherever
@@ -136,6 +117,55 @@ static int run_zmode(struct virge_ctx *ctx, int W, int H, uint32_t stride,
     return maxy;
 }
 
+/* Scan all of VRAM for a 16-bit value to find where the 3D Z unit actually
+ * writes (after an ALWAYS+ZUP draw at a known depth). Reports hit count and
+ * first/last address vs the programmed Z_BASE. */
+static void scan_vram_for(const uint8_t *vram, uint32_t vram_size,
+                          uint16_t target, uint32_t programmed_z_base)
+{
+    long total = 0;
+    uint32_t first = 0, last = 0;
+    for (uint32_t off = 0; off + 1 < vram_size; off += 2) {
+        if (*(const uint16_t *)(vram + off) == target) {
+            if (total == 0) first = off;
+            last = off;
+            total++;
+        }
+    }
+    printf("  scan for 0x%04x: %ld hits, first@0x%06x last@0x%06x\n",
+           target, total, first, last);
+    if (total == 0)
+        printf("    -> Z unit wrote NOTHING: ZUP bit or Z-unit path not running.\n");
+    else if (first >= programmed_z_base && first < programmed_z_base + 0x100000U)
+        printf("    -> writes inside programmed Z region (0x%x+): Z addressing OK; "
+               "anomaly is elsewhere.\n", programmed_z_base);
+    else
+        printf("    -> writes OUTSIDE programmed Z region: 3D Z unit mis-addressing "
+               "(first 0x%x vs programmed 0x%x).\n", first, programmed_z_base);
+}
+
+/* Run one LESS draw of the demo triangle with Z relocated to zb; return maxy.
+ * Reprograms VIRGE_3D_Z_BASE, clears the new Z region, draws under LESS. */
+static int run_less_at_zbase(struct virge_ctx *ctx, int W, int H, uint32_t stride,
+                             uint8_t *vram, uint32_t zb)
+{
+    ctx->z_base = zb;
+    virge_write32(ctx, VIRGE_3D_Z_BASE, zb & ~0x7);
+    virge_wait_engine(ctx);
+    cpu_clear_fb(ctx, W, H, stride);
+    virge_clear_z(ctx, 1.0f);
+    virge_fill_rect(ctx, 0, 0, W, H, 0);
+    ctx->z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_LESS | VIRGE_ZUP_ENABLE;
+    draw_demo_triangle(ctx, W, H);
+    virge_wait_engine(ctx);
+    int maxy = -1;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            if (read_px(vram, stride, x, y))
+                if (y > maxy) maxy = y;
+    return maxy;
+}
+
 int main(int argc, char **argv)
 {
     int req_w = 800, req_h = 600;
@@ -161,6 +191,7 @@ int main(int argc, char **argv)
     uint32_t stride = vctx.stride;
     uint8_t *vram = (uint8_t *)vctx.fb;
     uint8_t *zram = vram + vctx.z_base;
+    uint32_t orig_zbase = vctx.z_base;
 
     printf("\n3D triangle Z-mode matrix: requested %dx%d -> adopted %dx%d "
            "stride %u, fb 0x%x z 0x%x\n", req_w, req_h, W, H, stride,
@@ -194,40 +225,55 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
         run_zmode(&vctx, W, H, stride, vram, &modes[i]);
 
-    printf("\nResult: LESS cuts the triangle below ~y=234 while LEQUAL and ALWAYS\n");
-    printf("  pass and NEVER rejects all. The Z-buffer profile under LESS (next)\n");
-    printf("  shows the actual Zs written per row: values climbing toward 0xFFFF\n");
-    printf("  mean Zs is drifting up; a flat ~0x4000 means the compare itself is\n");
-    printf("  the problem.\n");
+    /* With the VIRGE_Z_FIXED scale fix, re-examine the ZBC_LESS row above: if
+     * it's now FULL, the scale was the whole bug. If still CUT/EMPTY, the 3D Z
+     * unit isn't fetching/writing the CPU-visible z_base region -- the 4MB
+     * scan and Z_BASE toggle below diagnose that. */
 
-    /* Z-buffer profile under LESS: the Z buffer holds the written Zs where the
-     * triangle passed and 0xFFFF where it failed (cleared, not overwritten). */
-    virge_wait_engine(&vctx);
-    cpu_clear_fb(&vctx, W, H, stride);
-    virge_clear_z(&vctx, 1.0f);
-    virge_fill_rect(&vctx, 0, 0, W, H, 0);
-    vctx.z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_LESS | VIRGE_ZUP_ENABLE;
-    draw_demo_triangle(&vctx, W, H);
-    virge_wait_engine(&vctx);
-    printf("\nZ-buffer profile under LESS (TZS should be 0x4000; cleared far=0xFFFF):\n");
-    dump_z_profile(W, H, stride, vram, zram);
-
-    /* Under ALWAYS every pixel passes and (with ZUP) writes Zs, so the Z
-     * buffer then holds the actual Zs(y) across the WHOLE triangle -- the
-     * direct test of whether Zs drifts. If this reads 0xffff, 3D ZUP writes
-     * aren't CPU-coherent with the linear aperture and Z readback can't
-     * observe the engine's Z state. A climb toward 0xffff = drift; flat
-     * ~0x4000 = no drift (compare-semantics problem). */
+    /* 4MB Z-write scan: ALWAYS+ZUP at z=0.7 writes a distinctive Zs word to
+     * every rendered pixel. Scan all of VRAM for it to find where the 3D Z
+     * unit ACTUALLY writes, vs the programmed Z_BASE. */
+    printf("\n4MB Z-write scan (ALWAYS+ZUP @ z=0.7, fixed scale):\n");
     virge_wait_engine(&vctx);
     cpu_clear_fb(&vctx, W, H, stride);
     virge_clear_z(&vctx, 1.0f);
     virge_fill_rect(&vctx, 0, 0, W, H, 0);
     vctx.z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_ALWAYS | VIRGE_ZUP_ENABLE;
-    draw_demo_triangle(&vctx, W, H);
+    {
+        struct virge_vertex vr = {.x=0.50f*W,.y=0.917f*H,.z=0.7f,.w=1,.r=1,.g=0,.b=0,.a=1};
+        struct virge_vertex vg = {.x=0.81f*W,.y=0.500f*H,.z=0.7f,.w=1,.r=0,.g=1,.b=0,.a=1};
+        struct virge_vertex vb = {.x=0.19f*W,.y=0.125f*H,.z=0.7f,.w=1,.r=0,.g=0,.b=1,.a=1};
+        virge_draw_triangle_gouraud(&vctx, vr, vg, vb);
+    }
     virge_wait_engine(&vctx);
-    printf("\nZ-buffer profile under ALWAYS (actual Zs written per row; "
-           "flat 0x4000=no drift, climbing=drift, all 0xffff=ZUP not CPU-visible):\n");
-    dump_z_profile(W, H, stride, vram, zram);
+    {
+        uint16_t target = (uint16_t)((VIRGE_Z_FIXED(0.7f) >> 15) & 0xFFFF);
+        printf("  expected Zs word = 0x%04x\n", target);
+        scan_vram_for(vram, vctx.vram_size, target, orig_zbase);
+    }
+
+    /* Z_BASE toggle: the default Z region 0xEA600-0x1D4C00 crosses the 1MB
+     * boundary (0x100000) -- a plausible DX-silicon wrap point the 2D engine
+     * and CPU handle but the 3D Z port might not. Move Z to 0x200000 (clear)
+     * and re-run LESS; if the cutoff moves/vanishes, Z-fetch addressing is
+     * the bug. */
+    printf("\nZ_BASE toggle (LESS, fixed scale; full triangle reaches ~%d):\n",
+           (int)(0.917f * H));
+    {
+        int m_def = run_less_at_zbase(&vctx, W, H, stride, vram, orig_zbase);
+        int m_2mb = run_less_at_zbase(&vctx, W, H, stride, vram, 0x200000);
+        vctx.z_base = orig_zbase;
+        virge_write32(&vctx, VIRGE_3D_Z_BASE, orig_zbase & ~0x7);
+        printf("  Z_BASE=0x%06x (default, crosses 1MB): LESS maxy=%d\n", orig_zbase, m_def);
+        printf("  Z_BASE=0x200000 (clear of 1MB):       LESS maxy=%d\n", m_2mb);
+        if (m_2mb > m_def + 50)
+            printf("  -> cutoff moved at 0x200000: Z-fetch addressing bug (1MB wrap?).\n");
+        else if (m_2mb == m_def)
+            printf("  -> same cutoff: walk-relative, internal to the span engine.\n");
+        else
+            printf("  -> cutoff changed (def=%d, 2mb=%d): addressing partly involved.\n",
+                   m_def, m_2mb);
+    }
 
     /* Leave the demo's actual config (LESS) on screen for a photo. */
     printf("\nLeaving the demo's exact config (LESS) on screen. Ctrl-C to exit.\n");
