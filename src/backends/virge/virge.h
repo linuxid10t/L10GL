@@ -203,6 +203,15 @@
 /* Writing bits 15-14 = 00b means "no change" (DB019-B §22, PDF p.301),
  * so interrupt-clear writes below don't disturb the engine enable. */
 #define VIRGE_SSC_VSY_CLR        (1 << 0)   /* clear latched VSY INT */
+/* Bit 8 VSY ENB - enable the vertical-sync interrupt. The VSY INT status
+ * latch (Subsystem Status bit 0) only reports an interrupt that is ENABLED:
+ * with this bit clear the latch never sets, so a clear-then-poll wait_vsync
+ * spins to its 250ms timeout on every call (DB019-B §22, PDF p.300).
+ * Confirmed on DX hardware: VSY INT sets within ~60ms only with VSY ENB set
+ * (fliptest, 2026-07-07). OR it onto any control write -- bits 15-14 = 00b
+ * mean "no S3d reset/change" (PDF p.301). (Asserts the PCI IRQ line; safe
+ * here because no kernel driver owns the card on the takeover path.) */
+#define VIRGE_SSC_VSY_ENB        (1 << 8)
 
 /* ========================================================================
  * 2D Register Bank — BitBLT / Rectangle Fill

@@ -672,10 +672,19 @@ void virge_wait_vsync(struct virge_ctx *ctx)
      * (hard-hung scantest phase 2 on real hardware). Correct sequence:
      * clear the latch, then wait for the next vsync to set it again.
      *
+     * The latch also only reports an interrupt that is ENABLED: VSY ENB
+     * (Subsystem Control bit 8) must be set or the status bit never sets
+     * and this poll times out every call (DB019-B §22, PDF p.300;
+     * confirmed on DX hardware via fliptest 2026-07-07: VSY INT sets in
+     * ~60ms only with VSY ENB). The takeover's own wait_vsync used to
+     * print the 250ms warning on every boot for exactly this reason; OR
+     * VSY ENB onto the clear write to arm it.
+     *
      * The latch holds the event, so sleep-polling loses nothing; the
      * poll is also bounded so a misconfigured scanout (no vsync being
      * generated) degrades to a warning instead of an unkillable spin. */
-    virge_write32(ctx, VIRGE_SUBSYS_CONTROL, VIRGE_SSC_VSY_CLR);
+    virge_write32(ctx, VIRGE_SUBSYS_CONTROL,
+                  VIRGE_SSC_VSY_CLR | VIRGE_SSC_VSY_ENB);
     for (int i = 0; i < 1250; i++) {   /* 1250 * 200us = 250ms bound */
         if (virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_VSYNC)
             return;
