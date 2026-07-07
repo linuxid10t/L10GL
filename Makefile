@@ -8,9 +8,9 @@
 #   demos/textured_cube.c       - Textured cube demo (needs texture-capable backend)
 #
 # Usage:
-#   make                      - Build all demos with default backend (mga1064)
-#   make BACKEND=virge        - Build all demos with S3 ViRGE backend
-#   make textured_cube        - Build just the textured cube demo
+#   make                      - Build every demo and diagnostic (default backend mga1064)
+#   make BACKEND=virge        - Same, but select the S3 ViRGE backend for the demos
+#   make <name>               - Build just one target (e.g. cube, cubefb, seamtest)
 
 CC       = gcc
 CFLAGS   = -Wall -Wextra -O2 -g -D_GNU_SOURCE -Isrc
@@ -33,12 +33,17 @@ else
 BACKEND_DEFINE = -DBACKEND_MGA1064
 endif
 
-# Demos (fbtest is backend-free: pure fbdev, links no L10GL code)
-DEMOS = cube textured_cube triangle fbtest
+# Interactive demos. cube/textured_cube/triangle/cubediag use the front-end
+# API (built against the selected BACKEND); fbtest is backend-free (pure fbdev).
+DEMOS = cube textured_cube triangle cubediag fbtest
+
+# Diagnostics: virge-direct chip probes (link virge.c explicitly, independent
+# of BACKEND) that drive the hardware and CPU-read VRAM back. Built by default.
+TESTS = scantest filltest tritest gltritest fliptest dztest seamtest cubefb
 
 .PHONY: all clean
 
-all: $(DEMOS)
+all: $(DEMOS) $(TESTS)
 
 # Pattern: build demo from demos/X.c + core sources
 cube: demos/cube.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
@@ -110,4 +115,4 @@ cubefb: demos/cubefb.c src/backends/virge/virge.c src/backends/virge/virge.h
 	$(CC) $(CFLAGS) -o $@ demos/cubefb.c src/backends/virge/virge.c $(LDFLAGS)
 
 clean:
-	rm -f $(DEMOS) *.o src/*.o src/backends/*/*.o
+	rm -f $(DEMOS) $(TESTS) *.o src/*.o src/backends/*/*.o
