@@ -60,7 +60,32 @@ Key facts verified against this document (2026-07):
   FIFO slots free, FIFO is 16 deep (PDF p. 300).
 - **Display start address**: CRC/CRD (bits 15-0) + CR31 bits 5-4 (16-17)
   + CR51 bits 1-0 (18-19); a non-zero CR69 bits 3-0 supersedes the
-  CR31/CR51 extension bits entirely (PDF p. 193).
+  CR31/CR51 extension bits entirely (PDF p. 193). **The unit is a DWORD
+  (byte offset /4)** with ENH MAP set: CR31 bit 3 "causes the use of
+  doubleword memory addressing mode" (PDF p. 193). Hardware-confirmed on
+  DX via `fliptest` (2026-07-07): cycling the start address through
+  byte divisors x1/x2/x4/x8 of the back-buffer offset, only **x4**
+  produced a clean full-screen page flip (x8 sheared, x2 hit the Z
+  region, x1 hit end-of-VRAM). This is the CRTC page-flip register for
+  double-buffering.
+- **VSY INT latch needs VSY ENB.** Subsystem Status bit 0 (VSY INT) is
+  interrupt *status* that only reports an interrupt that is *enabled*;
+  Subsystem Control bit 8 (VSY ENB) must be set or the latch never sets
+  and a clear-then-poll vsync wait spins to its timeout every call
+  (PDF pp. 299-301). Hardware-confirmed on DX via `fliptest`: VSY INT
+  sets within ~60ms with VSY ENB, never without. 0x3DA bit 3 (Input
+  Status #1, live vertical retrace) works as an independent vsync
+  source and is already covered by the driver's `ioperm(0x3C0,0x20,1)`.
+- **Hardware-established (NOT in the datasheet): on DX silicon, 2D
+  command kicks reset the 3D `VIRGE_3D_Z_STRIDE` (0xB4E8) to its
+  all-ones default 0xFF8 (4088).** `virge_clear_z` and `virge_fill_rect`
+  (2D BitBLT bank) invalidate the 3D triangle bank's Z stride, so the
+  one-time-at-init programming does not survive the 2D ops between init
+  and the first 3D draw — the 3D Z fetch then uses stride 4088 while the
+  2D Z clear wrote stride 1600, cutting the image at the row where the
+  mismatch starts failing the Z test. 86Box does not reproduce this (it
+  models the 2D and 3D register files as separate). Fix in L10GL: re-arm
+  the 3D dest/Z/stride/clip state before every 3D primitive.
 - The exact 3D triangle sub-pixel setup formulas are **not** in this
   document — §15.4.5.2 states setup code "will be provided by S3 to
   customers". Register descriptions define TXEND01/12 as the X of the

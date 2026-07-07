@@ -1,12 +1,12 @@
-# L10GL handoff brief — state as of 2026-07-06 (evening)
+# L10GL handoff brief — state as of 2026-07-07
 
 Audience: an implementing agent picking up this project cold. Read
 `PLAN.md` (roadmap + current-state snapshot) and
 `docs/datasheets/README.md` (datasheet page index + verified register
-facts) before changing code. This file records the live debugging
-state: symptom 1 (diagnosed — monitor scaling moiré, parked) and
-symptom 2 (narrowed to the 3D Z unit: wrong TZS scale + Z fetch/update
-not touching the CPU-visible z_base region — kill sequence pending).
+facts) before changing code. Live state: symptom 1 (diagnosed — monitor
+scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
+double-buffering with vsync page-flip (LANDED 2026-07-07); a newly-
+visible back-face bleedthrough quality issue (OPEN).
 
 ## Test setup (fixed, do not re-derive)
 
@@ -76,67 +76,104 @@ ViRGE may not cleanly hit. **Parked.** Free mitigation: the monitor's
 manual coarse/fine clock & phase controls can reduce it. The scanout
 itself is correct; this is cosmetic and does not block engine work.
 
-## Open symptom 2: now isolated to the 3D Z unit
+## Symptom 2 (3D Z-buffer cutoff): RESOLVED 2026-07-06/07
 
-The investigation narrowed in stages, each hardware-verified:
+The 3D cutoff (cube/triangle cut at ~2/5 height, y≈234 of 600; 2D fills
+full height) was **two compounding bugs**, both fixed and verified:
 
-1. **2D fills are correct.** `filltest` passes cleanly after the
-   XP/YP direction fix (`b0059e2`) — rects land at the right
-   addresses, full height, correct stride. The old PLAN.md "row
-   ceiling ~299" / "narrow width" mysteries did not reproduce on the
-   fixed scanout for FB-destination fills.
-2. **The 3D cutoff is Z-gated.** A uniform-z (0.5) Gouraud triangle
-   over a Z-buffer cleared to 0xFFFF, varying only CMD_SET ZBC
-   [22:20]: NEVER→empty, ALWAYS→full, LEQUAL→full, **LESS→cut at
-   y≈234** (top ~24% of pixels render; walk is bottom-up so the walk
-   *starts* failing and begins passing at y≈234).
-3. **Z-clear coverage is complete.** CPU readback at
-   `z_base + y*1600` reads 0xFFFF at every sampled row, both after
-   `virge_clear_z` and after the subsequent color fill. The Zzb=0
-   boundary model is refuted.
-4. **The current analysis** (see "established engine facts" below for
-   the receipts): with the driver's `VIRGE_Z_FIXED(z) = z<<15`, the
-   compare-side integer is `TZS>>15` = **0** for any z<1. Therefore
-   LEQUAL (0 ≤ anything) is **vacuous — it always renders full and
-   proves nothing**; and LESS (0 < Zzb) renders a pixel iff the word
-   the Z unit *actually fetches* is nonzero. The LESS image is a map
-   of fetched memory content. Since the CPU-visible z_base region is
-   all 0xFFFF, **the Z unit is not fetching (nor, per the ZUP
-   write-back check, writing) the CPU-visible z_base region**. The
-   y≈234 boundary lives at whatever addresses it really touches.
-   Note the programmed Z region (0xEA600–0x1D4C00) crosses the 1MB
-   boundary — a plausible wrap point for a Z-port addressing erratum
-   that the 2D engine and CPU aperture handle fine.
+1. **VIRGE_Z_FIXED scale** (commit `ae351e6`, the V10 color-scale twin).
+   The Z unit compares the S16.15 *integer part* (TZS>>15) as the full
+   0–65535 Z word. The old `z<<15` made every z<1.0 compare as **0**, so
+   ZBC_LESS became "pass iff the fetched Z word is nonzero" (the cutoff)
+   and ZUP wrote 0 (no depth ordering). Fixed: `VIRGE_Z_FIXED(x) =
+   x*65535*32768`, same ×65535 on the deltas (virge.h).
 
-**Kill sequence (next hardware run, one build):**
+2. **Z_STRIDE clobbered by 2D commands on real DX silicon** (commit
+   `f0811f1`, renamed `engine_init_3d` → `program_3d_state`). On real DX
+   hardware, executing 2D commands (`virge_clear_z`, `virge_fill_rect`)
+   resets `VIRGE_3D_Z_STRIDE` (0xB4E8) to its all-ones default **0xFF8
+   (4088)**. The clear wrote Z at stride 1600 (2D) but the 3D fetch then
+   used 4088 — they disagreed, and below y≈234 the 3D unit fetched garbage
+   Z and failed the test. 86Box never reproduced this (it models the 2D
+   and 3D register files as separate — the "fidelity caveat"). Fix:
+   re-arm `program_3d_state` (DEST/Z base, strides, clip) before **every**
+   3D primitive, in both `virge_draw_triangle_gouraud` and
+   `virge_draw_textured_triangle`.
 
-1. Fix `VIRGE_Z_FIXED`: the S16.15 integer part is the full 16-bit Z
-   value, so `VIRGE_Z_FIXED(x) = x × 65535 × 32768` (z=1.0 →
-   0x7FFF8000; compare value = TZS>>15). Same ×65535 on TdZdX/TdZdY.
-   This is the Z twin of the V10 color-scale fix (`d101112`); correct
-   the virge.h comment. Needed regardless of the addressing bug.
-2. ALWAYS + ZUP draw at a *distinctive* depth (z=0.7 → Zs=0xB332; do
-   not use 0.5→0x7FFF, which is also RGB555 white and false-positives
-   against the framebuffer).
-3. CPU-scan all 4MB for runs of that value → the Z unit's real write
-   base/stride/orientation, directly comparable to the programmed
-   Z_BASE/Z_STRIDE. Nothing found → the Z unit never writes: suspect
-   the ZUP bit or a Z-unit enable rather than addressing.
-4. Independent discriminator: set Z_BASE = 0x200000 (2MB) and re-run
-   the LESS matrix. Boundary moves/vanishes → fetched-content map
-   confirmed (addressing story, incl. the 1MB-crossing hypothesis).
-   Boundary stays at y≈234 → walk-relative, internal to the span
-   engine — different investigation.
+**Verified:** `gltritest` ZBC matrix — LEQUAL/LESS/ALWAYS all FULL at
+maxy=549, count=89899; NEVER empty. Z_BASE toggle (0xea600 vs 0x200000)
+both FULL. `./cube` renders full height (cutoff gone). This DX-specific
+"2D-invalidates-3D-Z_STRIDE" behavior is hardware-established knowledge
+no on-hand document contains — recorded in `docs/datasheets/README.md`'s
+verified-facts list.
 
-Once Z works: the real acceptance test is two overlapping triangles
-at z=0.3/0.7 drawn in both orders occluding identically. Then
-`./triangle` / `./cube` should finally render correctly; remaining
-shape/gradient defects at that point are V7/V9 sub-pixel issues
-(PLAN.md Phase 0).
+The Z-layout probe in gltritest still prints `[MISMATCH]` (measured
+stride ~1597 vs 1600) — a false-positive measurement artifact (stray
+0xB332 hits in uninitialized VRAM corrupt the first/last endpoint math),
+NOT a regression; the matrix is authoritative.
 
-**Retroactive warning:** every earlier conclusion that leaned on
-"LEQUAL renders full" as a control is invalid — LEQUAL was vacuously
-true at the current Z scale.
+## Double-buffering + vsync page-flip: LANDED 2026-07-07
+
+Tear-free animation via CRTC page flip (commits `2863663`..`7b4c67b`).
+The cube/textured_cube were single-buffered and unsynced (torn); now they
+render into a back buffer and `l10gl_swap_buffers` flips it to scanout at
+vertical blank. Two hardware facts were settled first by `fliptest`
+(`demos/fliptest.c`), both cited in `docs/datasheets/README.md`:
+
+- **Display-start-address unit = DWORD (byte/4).** CR31 bit 3 (ENH MAP,
+  which the driver sets) selects doubleword addressing (DB019-B PDF
+  p.193). fliptest cycled CR0C/CR0D+CR69 through x1/x2/x4/x8 of the
+  back-buffer offset; only **x4** gave a clean full-screen page flip
+  (x8 sheared "red-over-green", x2 hit the Z-region garbage, x1 hit
+  end-of-VRAM garbage).
+- **The per-boot vsync timeout was a missing interrupt enable.**
+  `virge_wait_vsync` polled the VSY INT latch (Subsystem Status bit 0),
+  but that latch only reports an interrupt that is ENABLED, and the
+  driver never set VSY ENB (Subsystem Control bit 8, PDF p.300). fliptest
+  confirmed: VSY INT sets in ~60ms with VSY ENB, never without. 0x3DA
+  bit-3 (live retrace) also works as an independent source. Fix: OR
+  VSY_ENB onto the clear write (`b904aa4`); the "wait_vsync timed out"
+  warning is gone.
+
+Backend (`8527a9e`): two color buffers — buffer 0 at offset 0 (the
+scanout at init), buffer 1 at stride*height; `ctx->fb_base` is always the
+current render target and starts at 0, so single-buffer callers and the
+offset-0 readback diagnostics are UNCHANGED. `virge_swap_buffers`:
+wait_engine → set_display_start(just-drawn buffer) → wait_vsync (let the
+flip land before reusing the old front) → flip fb_base. Z buffer shared
+across both color buffers (cleared per frame). Z base moved 0xea600 →
+0x1d4c00 (still inside 4MB). Takeover/cleanup now save+restore CR0C/CR0D/
+CR69 so the console returns to offset 0 after a swapping run. Frontend
+(`6e4f7f8`): `l10gl_swap_buffers(ctx)`, EGL-style, NULL-safe (mga1064
+leaves the slot unset). Demos (`7b4c67b`): cube/textured_cube call it
+after wait_engine each frame; `triangle.c` is static and stays
+single-buffered.
+
+**Verified on hardware:** cube/textured_cube animate tear-free (David,
+2026-07-07). NOTE: a stale `gltritest` binary (Z base 0xea600 + the old
+vsync timeout) was pasted that run because `gltritest` is not in `DEMOS`
+— see the diagnostic-inventory caveat. The cube IS in `DEMOS`, was
+rebuilt, and exercises commits 2–5 end-to-end.
+
+## Open: back-face color bleedthrough (unmasked by tear-free output)
+
+Now that the cube is tear-free, back-face color bleeds through the front
+faces — a depth/edge quality issue, NOT a double-buffer regression (the
+shared Z buffer is cleared each frame; the ZBC matrix is FULL). Likely
+pre-existing but hidden by tearing. Prime suspect:
+
+- **The cube's depth range is needlessly tiny.** `demos/cube.c`
+  `project()` sets `sz = (z_eye + camera_dist) / 1000.0f`, mapping eye-z
+  [4,6] to sz [0.004, 0.006] — a ~0.002 slice of [0,1], so only ~130 of
+  the 65536 Z levels separate front from back faces. At grazing angles
+  and shared silhouette edges this Z-fights and back faces bleed through.
+  Widening the mapping (e.g. sz = (z_eye − 3) / 4.0 → [0.25,0.75],
+  ~32000 levels) is the first thing to try.
+- Secondary: edge/silhouette sub-pixel setup (the V7/V9/V10 Phase-0
+  thread).
+
+Repro: `sudo ./cube`. Acceptance test: two overlapping triangles at
+z=0.3/0.7 drawn in both orders occluding identically.
 
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
@@ -186,8 +223,17 @@ never copy):
   only, no frontend).
 - `sudo ./gltritest` — the symptom-2 workhorse: full demo path
   (l10gl_create → clear → draw) with ZBC compare-code matrix, Z-clear
-  coverage probe, and Z-profile-under-LESS/ALWAYS readbacks. The kill
-  sequence above lands here.
+  coverage probe, and Z-profile-under-LESS/ALWAYS readbacks. Now the Z
+  regression test: LESS row must be FULL. **Rebuild caveat: gltritest is
+  NOT in `DEMOS`, so `make -B BACKEND=virge` does NOT rebuild it — use
+  `make -B BACKEND=virge gltritest` explicitly.** A stale binary still
+  reports `Z base: 0xea600` (pre-double-buffer layout) and the old vsync
+  timeout.
+- `sudo ./fliptest` — double-buffer groundwork probe (virge.c only): CPU-
+  draws two patterns and cycles the CRTC start address through x1/x2/x4/x8
+  divisors to settle the display-start unit on silicon, plus reports a
+  working vsync source (0x3DA retrace vs VSY INT latch w/ VSY ENB).
+  Settled x4/dword + VSY ENB on 2026-07-07.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump
@@ -210,3 +256,11 @@ the full timing-scaling story) · `048bc06` CR3B for doubled scanout ·
 `7fa057e`..`01c220f` gltritest: ZBC matrix (LESS cuts at y≈234),
 Z-clear coverage verified 0xFFFF, ZUP write-back missing from CPU
 view — leading to the "Z unit addressing" analysis above.
+`ae351e6` VIRGE_Z_FIXED ×65535 (symptom-2 fix #1) · `f0811f1` re-arm
+program_3d_state per primitive (symptom-2 fix #2: 2D clobbers Z_STRIDE
+to 0xFF8 on DX) — cutoff resolved · `2863663` fliptest (×4 start unit +
+VSY ENB) · `b904aa4` wait_vsync: enable VSY interrupt · `8527a9e`
+backend double-buffer primitives (2 color buffers, page flip) ·
+`6e4f7f8` l10gl_swap_buffers frontend API · `7b4c67b` cube/textured_cube
+swap each frame (tear-free). Open after this: back-face bleedthrough
+(tiny cube depth range), Ctrl-C console restore (#7).
