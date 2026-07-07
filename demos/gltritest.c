@@ -117,31 +117,50 @@ static int run_zmode(struct virge_ctx *ctx, int W, int H, uint32_t stride,
     return maxy;
 }
 
-/* Scan all of VRAM for a 16-bit value to find where the 3D Z unit actually
- * writes (after an ALWAYS+ZUP draw at a known depth). Reports hit count and
- * first/last address vs the programmed Z_BASE. */
-static void scan_vram_for(const uint8_t *vram, uint32_t vram_size,
-                          uint16_t target, uint32_t programmed_z_base)
+/* Draw a full-screen rectangle (two triangles) under ALWAYS+ZUP at a known
+ * depth, then scan VRAM for the Zs word. For a full-screen rect, first hit =
+ * the 3D Z base and (last-first-(W-1)*2)/(H-1) = the 3D Z row stride --
+ * precisely, regardless of edge-inclusion fuzz. Compare to the programmed
+ * Z_BASE / Z_STRIDE to pin the addressing bug. */
+static void probe_z_layout(struct virge_ctx *ctx, int W, int H, uint32_t stride_fb,
+                           uint8_t *vram, uint32_t vram_size, uint16_t target,
+                           uint32_t prog_zb, uint32_t prog_zs)
 {
+    virge_wait_engine(ctx);
+    cpu_clear_fb(ctx, W, H, stride_fb);
+    virge_clear_z(ctx, 1.0f);
+    virge_fill_rect(ctx, 0, 0, W, H, 0);
+    ctx->z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_ALWAYS | VIRGE_ZUP_ENABLE;
+    struct virge_vertex v00 = {.x=0,   .y=0,   .z=0.7f,.w=1,.r=1,.g=1,.b=1,.a=1};
+    struct virge_vertex vW0 = {.x=W-1, .y=0,   .z=0.7f,.w=1,.r=1,.g=1,.b=1,.a=1};
+    struct virge_vertex vWH = {.x=W-1, .y=H-1, .z=0.7f,.w=1,.r=1,.g=1,.b=1,.a=1};
+    struct virge_vertex v0H = {.x=0,   .y=H-1, .z=0.7f,.w=1,.r=1,.g=1,.b=1,.a=1};
+    virge_draw_triangle_gouraud(ctx, v00, vW0, vWH);
+    virge_draw_triangle_gouraud(ctx, v00, vWH, v0H);
+    virge_wait_engine(ctx);
+
     long total = 0;
     uint32_t first = 0, last = 0;
+    int have = 0;
     for (uint32_t off = 0; off + 1 < vram_size; off += 2) {
         if (*(const uint16_t *)(vram + off) == target) {
-            if (total == 0) first = off;
+            if (!have) { first = off; have = 1; }
             last = off;
             total++;
         }
     }
-    printf("  scan for 0x%04x: %ld hits, first@0x%06x last@0x%06x\n",
-           target, total, first, last);
-    if (total == 0)
-        printf("    -> Z unit wrote NOTHING: ZUP bit or Z-unit path not running.\n");
-    else if (first >= programmed_z_base && first < programmed_z_base + 0x100000U)
-        printf("    -> writes inside programmed Z region (0x%x+): Z addressing OK; "
-               "anomaly is elsewhere.\n", programmed_z_base);
+    uint32_t s_meas = (last > first + (uint32_t)(W - 1) * 2)
+                      ? (last - first - (uint32_t)(W - 1) * 2) / (uint32_t)(H - 1)
+                      : 0;
+    printf("  Zs 0x%04x: %ld hits (full-screen ~%d), base@0x%06x last@0x%06x, "
+           "measured Z stride = %u\n", target, total, W * H, first, last, s_meas);
+    printf("    programmed: Z_BASE=0x%06x Z_STRIDE=%u\n", prog_zb, prog_zs);
+    if (first == prog_zb && s_meas == prog_zs)
+        printf("    -> matches programmed: 3D Z base+stride correct.\n");
     else
-        printf("    -> writes OUTSIDE programmed Z region: 3D Z unit mis-addressing "
-               "(first 0x%x vs programmed 0x%x).\n", first, programmed_z_base);
+        printf("    -> MISMATCH: base 0x%06x (prog 0x%06x), stride %u (prog %u, x%.2f).\n",
+               first, prog_zb, s_meas, prog_zs,
+               prog_zs ? (double)s_meas / prog_zs : 0.0);
 }
 
 /* Run one LESS draw of the demo triangle with Z relocated to zb; return maxy.
@@ -230,26 +249,17 @@ int main(int argc, char **argv)
      * unit isn't fetching/writing the CPU-visible z_base region -- the 4MB
      * scan and Z_BASE toggle below diagnose that. */
 
-    /* 4MB Z-write scan: ALWAYS+ZUP at z=0.7 writes a distinctive Zs word to
-     * every rendered pixel. Scan all of VRAM for it to find where the 3D Z
-     * unit ACTUALLY writes, vs the programmed Z_BASE. */
-    printf("\n4MB Z-write scan (ALWAYS+ZUP @ z=0.7, fixed scale):\n");
-    virge_wait_engine(&vctx);
-    cpu_clear_fb(&vctx, W, H, stride);
-    virge_clear_z(&vctx, 1.0f);
-    virge_fill_rect(&vctx, 0, 0, W, H, 0);
-    vctx.z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_ALWAYS | VIRGE_ZUP_ENABLE;
-    {
-        struct virge_vertex vr = {.x=0.50f*W,.y=0.917f*H,.z=0.7f,.w=1,.r=1,.g=0,.b=0,.a=1};
-        struct virge_vertex vg = {.x=0.81f*W,.y=0.500f*H,.z=0.7f,.w=1,.r=0,.g=1,.b=0,.a=1};
-        struct virge_vertex vb = {.x=0.19f*W,.y=0.125f*H,.z=0.7f,.w=1,.r=0,.g=0,.b=1,.a=1};
-        virge_draw_triangle_gouraud(&vctx, vr, vg, vb);
-    }
-    virge_wait_engine(&vctx);
+    /* Z-layout probe: full-screen rect under ALWAYS+ZUP at z=0.7 writes the
+     * Zs word to every pixel; measure the 3D Z unit's actual base and row
+     * stride vs the programmed Z_BASE/Z_STRIDE. The demo-triangle 4MB scan
+     * already showed writes at 0x1364d2..0x30e7f8 (~2MB span, ~2x expected),
+     * implying base ok but stride ~2.5x; this pins the exact stride. */
+    printf("\nZ-layout probe (full-screen rect, ALWAYS+ZUP @ z=0.7):\n");
     {
         uint16_t target = (uint16_t)((VIRGE_Z_FIXED(0.7f) >> 15) & 0xFFFF);
-        printf("  expected Zs word = 0x%04x\n", target);
-        scan_vram_for(vram, vctx.vram_size, target, orig_zbase);
+        printf("  expected Zs word = 0x%04x (fixed scale)\n", target);
+        probe_z_layout(&vctx, W, H, stride, vram, vctx.vram_size, target,
+                       orig_zbase, W * 2);
     }
 
     /* Z_BASE toggle: the default Z region 0xEA600-0x1D4C00 crosses the 1MB
