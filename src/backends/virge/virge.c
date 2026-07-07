@@ -311,11 +311,16 @@ static void virge_dump_crtc_truth(struct virge_ctx *ctx)
 /* Registers saved before a scanout takeover and restored at cleanup.
  * Order is the ctx->saved_scanout[] layout. CR11 is included because
  * its bit 7 write-protects CR00-CR07 and must be juggled around the
- * horizontal-timing writes. */
+ * horizontal-timing writes. CR0C/CR0D/CR69 (the display-start address)
+ * are included so cleanup also restores the origin virge_swap_buffers
+ * may have moved -- otherwise the console would scan out the last
+ * rendered back buffer. Appended after the timing set so the takeover's
+ * hardcoded r[] indices (and VIRGE_SCANOUT_CR11_IDX) are unchanged. */
 static const uint8_t virge_scanout_regs[] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05,   /* horizontal timing set */
     0x11,                                 /* vert retrace end + CR0-7 lock */
     0x13, 0x3B, 0x43, 0x50, 0x51, 0x5D, 0x67,
+    0x0C, 0x0D, 0x69,                     /* display-start address (page flip) */
 };
 #define VIRGE_SCANOUT_REG_COUNT \
     ((int)(sizeof(virge_scanout_regs) / sizeof(virge_scanout_regs[0])))
@@ -692,6 +697,43 @@ void virge_wait_vsync(struct virge_ctx *ctx)
     }
     fprintf(stderr, "S3 ViRGE: wait_vsync timed out (no vsync in 250ms) "
                     "-- proceeding without sync\n");
+}
+
+void virge_set_display_start(struct virge_ctx *ctx, uint32_t byte_off)
+{
+    /* Display-start address: CR0C/CR0D = bits 15-0, CR69 bits 3-0 = bits
+     * 19-16 (which supersede CR31[5:4]/CR51[1:0] when non-zero, DB019-B
+     * PDF p.193). With ENH MAP set the unit is a DWORD (byte_off/4) --
+     * confirmed on DX hardware via fliptest (2026-07-07): only the x4
+     * divisor produces a clean full-screen page flip; x2/x8/x1 shear or
+     * land in the wrong region. The CRTC latches the new start at the
+     * next vertical blank, so a write at any time is tear-free for the
+     * next frame. CR0C/CR0D (index >= 8) are not behind CR11's CR00-07
+     * write protect; CR69 is CR40+, already unlocked by virge_init. */
+    (void)ctx;   /* CRTC port helpers are ctx-free; ctx kept for API symmetry */
+    uint32_t v = byte_off >> 2;   /* dword unit (ENH MAP, PDF p.193) */
+    vga_crtc_write(0x0C, (uint8_t)((v >> 8) & 0xFF));
+    vga_crtc_write(0x0D, (uint8_t)(v & 0xFF));
+    vga_crtc_write(0x69, (uint8_t)((v >> 16) & 0x0F));
+}
+
+void virge_swap_buffers(struct virge_ctx *ctx)
+{
+    /* Page-flip double-buffer. The engine has just finished a frame into
+     * the current render target (ctx->fb_base). Repoint the CRTC at it
+     * (latched, takes effect at the next vblank), wait for that vblank to
+     * land so the flip is effective before the caller reuses the now-
+     * offscreen buffer for the next frame's clear/draw (otherwise the
+     * still-scanned buffer tears), then flip the render target to the
+     * other buffer. The first swap is a visual no-op when fb_base starts
+     * at 0 (the scanout already points there); thereafter it ping-pongs.
+     * The Z buffer is shared across both color buffers (cleared per frame
+     * by the caller), so no second Z region is needed. */
+    virge_wait_engine(ctx);
+    virge_set_display_start(ctx, ctx->fb_base);
+    virge_wait_vsync(ctx);
+    ctx->current_back ^= 1;
+    ctx->fb_base = ctx->current_back ? ctx->fb_base_back : 0;
 }
 
 /* ========================================================================
@@ -1713,11 +1755,19 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
      * just refuses large textures rather than over-allocating.
      * ctx->width/height, not the caller's request: the takeover above
      * may have adopted the real raster. */
+    /* Two color buffers back the page-flip: buffer 0 at offset 0 (the
+     * scanout at init), buffer 1 at stride*height. ctx->fb_base is always
+     * the current render target and starts at 0, so single-buffer callers
+     * and the offset-0 readback diagnostics are unchanged; the Z buffer
+     * and texture heap follow BOTH color buffers. */
+    uint32_t one_fb = ctx->stride * (uint32_t)ctx->height;
     ctx->fb_base = 0;
-    ctx->z_base = ctx->width * ctx->height * bpp;  /* Z after framebuffer */
+    ctx->fb_base_back = one_fb;
+    ctx->current_back = 0;
+    ctx->z_base = one_fb + one_fb;            /* Z after both color buffers */
     ctx->vram_size = virge_detect_vram(pci.device_id);
 
-    /* Texture heap starts after framebuffer + Z buffer, quadword aligned */
+    /* Texture heap starts after both color buffers + Z buffer, quadword aligned */
     uint32_t z_size = ctx->width * ctx->height * 2;  /* Z is always 16-bit */
     ctx->tex_heap_next = ctx->z_base + z_size;
     ctx->tex_heap_next = (ctx->tex_heap_next + 7) & ~7;  /* QW align */
@@ -1749,7 +1799,8 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     printf("S3 ViRGE: S3d Engine initialized.\n");
     printf("  Screen: %dx%d, %d bpp (stride %u)\n",
            ctx->width, ctx->height, bpp * 8, ctx->stride);
-    printf("  FB base: 0x%x, Z base: 0x%x\n", ctx->fb_base, ctx->z_base);
+    printf("  FB base: 0x%x (back buf 0x%x), Z base: 0x%x\n",
+           ctx->fb_base, ctx->fb_base_back, ctx->z_base);
 
     return 0;
 }

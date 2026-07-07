@@ -565,13 +565,21 @@ struct virge_ctx {
 
     /* Native scanout takeover (no-fbdev machines): original CRTC
      * values (parallel to virge_scanout_regs[] in virge.c), restored
-     * by virge_cleanup. */
+     * by virge_cleanup. Includes CR0C/CR0D/CR69 so cleanup also restores
+     * the display-start address that virge_swap_buffers may have moved. */
     int      scanout_owned;
-    uint8_t  saved_scanout[16];
+    uint8_t  saved_scanout[20];
 
-    /* Memory layout (byte offsets in VRAM) */
-    uint32_t fb_base;       /* Framebuffer base address (normally 0) */
-    uint32_t z_base;        /* Z-buffer base address (after framebuffer) */
+    /* Memory layout (byte offsets in VRAM). Two color buffers back the
+     * double-buffer page flip: buffer 0 at offset 0 (the scanout at init),
+     * buffer 1 at fb_base_back. fb_base is always the CURRENT render
+     * target (the buffer the 2D/3D engine draws into) and starts at 0, so
+     * single-buffer callers and the offset-0 readback diagnostics are
+     * unchanged; virge_swap_buffers flips it between 0 and fb_base_back. */
+    uint32_t fb_base;       /* Current render-target base (engine draws here) */
+    uint32_t fb_base_back;  /* Second color buffer base (== stride*height) */
+    int      current_back;  /* 0 = rendering buffer 0, 1 = buffer fb_base_back */
+    uint32_t z_base;        /* Z-buffer base (after BOTH color buffers) */
     uint32_t vram_size;     /* Total VRAM in bytes */
 
     /* Cached CMD_SET destination format field */
@@ -652,6 +660,21 @@ void virge_wait_engine(struct virge_ctx *ctx);
  * virge_wait_vsync - Block until vertical retrace.
  */
 void virge_wait_vsync(struct virge_ctx *ctx);
+
+/*
+ * virge_set_display_start - Repoint the CRTC scanout origin to byte_off.
+ * The new start is latched at the next vertical blank (tear-free for the
+ * next frame). Unit and registers: see virge.c (dword, CR0C/CR0D + CR69).
+ */
+void virge_set_display_start(struct virge_ctx *ctx, uint32_t byte_off);
+
+/*
+ * virge_swap_buffers - Publish the just-rendered buffer via a CRTC page
+ * flip at the next vblank, then flip the render target to the other
+ * buffer for the next frame. No-op-ish until a caller renders + swaps;
+ * single-buffer code that never swaps is unaffected.
+ */
+void virge_swap_buffers(struct virge_ctx *ctx);
 
 /*
  * virge_crtc_peek/poke - Raw CRTC register access for diagnostic tools
