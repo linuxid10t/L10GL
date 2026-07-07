@@ -256,6 +256,7 @@ int main(int argc, char **argv)
         }
 
         l10gl_wait_engine(&ctx);
+        l10gl_swap_buffers(&ctx);   /* tear-free: publish frame at vblank, flip render target */
 
         if (static_mode) {
             printf("Static frame %d rendered. Ctrl-C to exit.\n", frame);

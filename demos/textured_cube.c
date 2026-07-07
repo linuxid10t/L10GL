@@ -348,6 +348,7 @@ int main(int argc, char **argv)
         }
 
         l10gl_wait_engine(&ctx);
+        l10gl_swap_buffers(&ctx);   /* tear-free: publish frame at vblank, flip render target */
 
         angle += 0.02f;
         if (angle > 2.0f * PI)
