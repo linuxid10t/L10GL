@@ -78,5 +78,12 @@ tritest: demos/tritest.c src/backends/virge/virge.c src/backends/virge/virge.h
 gltritest: demos/gltritest.c src/backends/virge/virge.c src/backends/virge/virge.h
 	$(CC) $(CFLAGS) -o $@ demos/gltritest.c src/backends/virge/virge.c $(LDFLAGS)
 
+# Diagnostic: CRTC page-flip probe (double-buffering groundwork). CPU-draws
+# two patterns and cycles the display-start address through candidate byte
+# divisors to settle the register unit on silicon, plus reports a working
+# vsync detector. Virge-specific, links only the chip driver (no frontend).
+fliptest: demos/fliptest.c src/backends/virge/virge.c src/backends/virge/virge.h
+	$(CC) $(CFLAGS) -o $@ demos/fliptest.c src/backends/virge/virge.c $(LDFLAGS)
+
 clean:
 	rm -f $(DEMOS) *.o src/*.o src/backends/*/*.o
