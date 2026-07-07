@@ -212,6 +212,23 @@ int main(int argc, char **argv)
     printf("\nZ-buffer profile under LESS (TZS should be 0x4000; cleared far=0xFFFF):\n");
     dump_z_profile(W, H, stride, vram, zram);
 
+    /* Under ALWAYS every pixel passes and (with ZUP) writes Zs, so the Z
+     * buffer then holds the actual Zs(y) across the WHOLE triangle -- the
+     * direct test of whether Zs drifts. If this reads 0xffff, 3D ZUP writes
+     * aren't CPU-coherent with the linear aperture and Z readback can't
+     * observe the engine's Z state. A climb toward 0xffff = drift; flat
+     * ~0x4000 = no drift (compare-semantics problem). */
+    virge_wait_engine(&vctx);
+    cpu_clear_fb(&vctx, W, H, stride);
+    virge_clear_z(&vctx, 1.0f);
+    virge_fill_rect(&vctx, 0, 0, W, H, 0);
+    vctx.z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_ALWAYS | VIRGE_ZUP_ENABLE;
+    draw_demo_triangle(&vctx, W, H);
+    virge_wait_engine(&vctx);
+    printf("\nZ-buffer profile under ALWAYS (actual Zs written per row; "
+           "flat 0x4000=no drift, climbing=drift, all 0xffff=ZUP not CPU-visible):\n");
+    dump_z_profile(W, H, stride, vram, zram);
+
     /* Leave the demo's actual config (LESS) on screen for a photo. */
     printf("\nLeaving the demo's exact config (LESS) on screen. Ctrl-C to exit.\n");
     virge_clear_z(&vctx, 1.0f);
