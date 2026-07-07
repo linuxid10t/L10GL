@@ -1,24 +1,26 @@
 /*
  * cubefb.c - render the cube to VRAM and CPU-read it back, to settle whether
- * the bleedthrough lives in the framebuffer or is introduced by the monitor.
+ * the face-color bleed lives in the framebuffer or is introduced later.
  *
- * seamtest proved the rasterizer is watertight (no shared-edge double-draw)
- * and the Z pipeline is silicon-correct, so the cube's framebuffer should be
- * clean: each face a uniform color with sharp 1px boundaries. This probe
- * renders the cube with FLAT full-saturation face colors (no lighting) at
- * several orientations and CPU-reads the framebuffer -- bypassing the monitor
- * entirely -- classifying every pixel:
- *   - a pure face color (r/g/b/y/m/c),
- *   - background (black),
- *   - OTHER = anything else (a blend / contamination = a real VRAM artifact).
- * It also prints the run-length-encoded color sequence along the middle row,
- * so any bleed BAND (a short run of one face's color inside another) is
- * visible directly.
+ * Three contamination signals, none of which the first version had all of:
+ *   - BLENDS:      pixels that are no pure face color and not background
+ *                  (a Gouraud/interpolation blend).
+ *   - MISPLACED:   a face-color pixel sitting INSIDE another face's region --
+ *                  4-connected, >=3 neighbors of a DIFFERENT face and no
+ *                  background neighbor (so a clean shared edge, whose pixels
+ *                  have only ~1 other-face neighbor, is not flagged). This is
+ *                  the direct detector for "blue on teal": solid blue pixels
+ *                  surrounded by teal.
+ *   - EXCESS:      a visible face rendering more pixels than its projected
+ *                  geometric area (sum of |det|/2 over its two triangles) --
+ *                  catches a thin sliver spilling onto a neighbor even when it
+ *                  does not form a pocket.
  *
- * If OTHER == 0 and the middle row shows clean solid runs per face, the
- * framebuffer is correct and the bleed seen on the physical monitor is the
- * monitor's 1.8x non-integer scaling blending the 1px boundaries into color
- * fringes (same root cause as symptom 1) -- not a driver/engine bug.
+ * The cube is rendered with FLAT full-saturation face colors (no lighting) at
+ * several orientations and the framebuffer is CPU-read directly (bypassing the
+ * monitor). MISPLACED == 0 and BLENDS == 0 and no EXCESS => the framebuffer is
+ * clean and the bleed is monitor/scanout-side; otherwise the readback points
+ * at the face pair and orientation.
  *
  * Build: make -B BACKEND=virge cubefb     Run: sudo ./cubefb
  */
@@ -75,22 +77,29 @@ static const int cube_faces[12][3] = {
 static const float face_colors[6][3] = {
     {1,0,0},{0,1,0},{0,0,1},{1,1,0},{1,0,1},{0,1,1},
 };
+static const char face_letter[6] = { 'r', 'g', 'b', 'y', 'm', 'c' };
 
 /* Classify a 555 pixel: 0..5 = face index, -1 = background, -2 = other. */
 static int classify(uint16_t v)
 {
     int r = (v >> 10) & 0x1F, g = (v >> 5) & 0x1F, b = v & 0x1F;
-    const int HI = 27, LO = 4;   /* tolerate minor rounding around 31 / 0 */
-    if (r >= HI && g <= LO && b <= LO) return 0;      /* red    / Back   */
-    if (r <= LO && g >= HI && b <= LO) return 1;      /* green  / Front  */
-    if (r <= LO && g <= LO && b >= HI) return 2;      /* blue   / Left   */
-    if (r >= HI && g >= HI && b <= LO) return 3;      /* yellow / Right  */
-    if (r >= HI && g <= LO && b >= HI) return 4;      /* magenta/ Bottom */
-    if (r <= LO && g >= HI && b >= HI) return 5;      /* cyan   / Top    */
-    if (r <= LO && g <= LO && b <= LO) return -1;     /* background */
-    return -2;                                        /* contamination */
+    const int HI = 27, LO = 4;
+    if (r >= HI && g <= LO && b <= LO) return 0;
+    if (r <= LO && g >= HI && b <= LO) return 1;
+    if (r <= LO && g <= LO && b >= HI) return 2;
+    if (r >= HI && g >= HI && b <= LO) return 3;
+    if (r >= HI && g <= LO && b >= HI) return 4;
+    if (r <= LO && g >= HI && b >= HI) return 5;
+    if (r <= LO && g <= LO && b <= LO) return -1;
+    return -2;
 }
-static const char face_letter[7] = { 'r', 'g', 'b', 'y', 'm', 'c', '?' };
+
+static float tri_area(const struct screen_vertex *a, const struct screen_vertex *b,
+                      const struct screen_vertex *c)
+{
+    float det = (b->sx - a->sx) * (c->sy - a->sy) - (c->sx - a->sx) * (b->sy - a->sy);
+    return fabsf(det) * 0.5f;
+}
 
 static volatile sig_atomic_t running = 1;
 static void sighandler(int s) { (void)s; running = 0; }
@@ -107,15 +116,16 @@ int main(void)
     int W = vctx.width, H = vctx.height;
     uint32_t stride = vctx.stride;
 
-    printf("\ncubefb: cube framebuffer readback (%dx%d stride %u) -- bypasses the monitor\n\n",
+    printf("\ncubefb: cube framebuffer readback (%dx%d stride %u) -- bypasses the monitor\n",
            W, H, stride);
+    printf("Signals: BLENDS (non-face color), MISPLACED (face color inside another face),\n");
+    printf("         EXCESS (face renders more px than its projected area).\n\n");
 
     float angles[] = { 0.3f, 0.6f, 0.9f, 1.2f, 1.5f };
-    long worst_other = 0;
+    long worst = 0;                 /* worst total contamination across angles */
 
     for (size_t a = 0; a < sizeof(angles)/sizeof(angles[0]); a++) {
         float angle = angles[a];
-        /* clear FB black + Z far */
         for (int y = 0; y < H; y++) {
             uint16_t *row = (uint16_t *)(vram + (size_t)y * stride);
             for (int x = 0; x < W; x++) row[x] = 0;
@@ -123,7 +133,6 @@ int main(void)
         virge_clear_z(&vctx, 1.0f);
         virge_wait_engine(&vctx);
 
-        /* transform + draw (flat colors, fixed order, back-face cull) */
         float rot[3][3];
         build_rotation(rot, angle, angle * 0.7f);
         struct screen_vertex projected[8];
@@ -132,6 +141,16 @@ int main(void)
             mat3_transform(transformed[i], rot, cube_verts[i]);
             project(&projected[i], transformed[i], W, H, 5.0f);
         }
+
+        /* expected rendered px per face = sum of its 2 triangles' screen area */
+        float expected[6] = {0};
+        for (int f = 0; f < 6; f++) {
+            for (int t = 0; t < 2; t++) {
+                const int *fc = cube_faces[2*f + t];
+                expected[f] += tri_area(&projected[fc[0]], &projected[fc[1]], &projected[fc[2]]);
+            }
+        }
+
         for (int face = 0; face < 12; face++) {
             int ci = face / 2;
             float fn[3];
@@ -154,37 +173,80 @@ int main(void)
         }
         virge_wait_engine(&vctx);
 
-        /* read back + classify */
-        long face_ct[6] = {0}, bg = 0, other = 0;
-        int maxrun = 0, run = 0, srx = -1, sry = -1;
+        /* pass 1: classify + count */
+        long face_ct[6] = {0}, bg = 0, blends = 0;
         for (int y = 0; y < H; y++) {
-            run = 0;
             const uint16_t *row = (const uint16_t *)(vram + (size_t)y * stride);
             for (int x = 0; x < W; x++) {
                 int c = classify(row[x]);
                 if (c >= 0) face_ct[c]++;
                 else if (c == -1) bg++;
-                else { other++; if (++run > maxrun) { maxrun = run; srx = x; sry = y; } }
-                if (c != -2) run = 0;   /* contiguous-other run only */
+                else blends++;
             }
         }
-        long rendered = face_ct[0]+face_ct[1]+face_ct[2]+face_ct[3]+face_ct[4]+face_ct[5];
-        if (other > worst_other) worst_other = other;
-        printf("angle %.2f rad: rendered %6ld px (bg %6ld), other %4ld, max other-run %d",
-               angle, rendered, bg, other, maxrun);
-        if (other) printf(" at (%d,%d)", srx, sry);
-        printf("   faces[r g b y m c]=%ld %ld %ld %ld %ld %ld\n",
-               face_ct[0],face_ct[1],face_ct[2],face_ct[3],face_ct[4],face_ct[5]);
 
-        /* For the middle orientation, print the middle-row color sequence
-         * (RLE) so any bleed band inside a face is visible. */
+        /* pass 2: misplaced solid face color (a face pixel with >=3 neighbors
+         * of a DIFFERENT face and no background neighbor -> inside another
+         * face's region). */
+        long misplaced = 0; int mp_x = -1, mp_y = -1, mp_face = -1, mp_other = -1;
+        for (int y = 1; y < H-1; y++) {
+            const uint16_t *rowm = (const uint16_t *)(vram + (size_t)(y-1) * stride);
+            const uint16_t *row0 = (const uint16_t *)(vram + (size_t)y * stride);
+            const uint16_t *rowp = (const uint16_t *)(vram + (size_t)(y+1) * stride);
+            for (int x = 1; x < W-1; x++) {
+                int c = classify(row0[x]);
+                if (c < 0 || c > 5) continue;
+                int nb[4] = { classify(row0[x-1]), classify(row0[x+1]),
+                              classify(rowm[x]),    classify(rowp[x]) };
+                int bg_n = 0, diff[6] = {0};
+                for (int k = 0; k < 4; k++) {
+                    if (nb[k] == -1) bg_n++;
+                    else if (nb[k] >= 0 && nb[k] <= 5 && nb[k] != c) diff[nb[k]]++;
+                }
+                if (bg_n > 0) continue;
+                for (int f = 0; f < 6; f++) {
+                    if (diff[f] >= 3) {
+                        misplaced++;
+                        if (mp_x < 0) { mp_x = x; mp_y = y; mp_face = c; mp_other = f; }
+                        break;
+                    }
+                }
+            }
+        }
+
+        /* excess coverage: rendered >> expected (loose threshold; min 50px) */
+        int excess_face = -1; long excess_by = 0;
+        for (int f = 0; f < 6; f++) {
+            if (expected[f] < 1.0f) continue;
+            long thr = 50 + (long)(expected[f] * 0.10f);
+            if (face_ct[f] > (long)expected[f] + thr) {
+                long by = face_ct[f] - (long)expected[f];
+                if (by > excess_by) { excess_by = by; excess_face = f; }
+            }
+        }
+
+        long rendered = face_ct[0]+face_ct[1]+face_ct[2]+face_ct[3]+face_ct[4]+face_ct[5];
+        long tot = blends + misplaced + (excess_face >= 0 ? 1 : 0);
+        if (tot > worst) worst = tot;
+
+        printf("angle %.2f: rendered %ld (bg %ld), blends %ld, misplaced %ld, excess %s\n",
+               angle, rendered, bg, blends, misplaced,
+               excess_face >= 0 ? "YES" : "no");
+        if (misplaced)
+            printf("    first misplaced: %c at (%d,%d) inside %c\n",
+                   face_letter[mp_face], mp_x, mp_y, face_letter[mp_other]);
+        if (excess_face >= 0)
+            printf("    excess: %c rendered %ld vs expected ~%ld (+%ld)\n",
+                   face_letter[excess_face], face_ct[excess_face],
+                   (long)expected[excess_face], excess_by);
+
         if (a == 1) {
             int y = H / 2;
-            const uint16_t *row = (const uint16_t *)(vram + (size_t)y * stride);
+            const uint16_t *row0 = (const uint16_t *)(vram + (size_t)y * stride);
             printf("  middle row y=%d RLE: ", y);
             int prev = -99, cnt = 0, emitted = 0;
             for (int x = 0; x <= W; x++) {
-                int c = (x < W) ? classify(row[x]) : -99;
+                int c = (x < W) ? classify(row0[x]) : -99;
                 if (x == W || c != prev) {
                     if (cnt > 0) {
                         char ch = (prev == -1) ? '.' : (prev == -2) ? '?' : face_letter[prev];
@@ -199,15 +261,12 @@ int main(void)
     }
 
     printf("\n");
-    if (worst_other == 0)
-        printf("=> Framebuffer CLEAN at every orientation (0 contamination, only pure\n"
-               "   face colors + background). The bleed you see is NOT in VRAM -- it is\n"
-               "   introduced by the monitor's 1.8x non-integer scaling blending the\n"
-               "   correct 1px face boundaries into color fringes (same root cause as\n"
-               "   symptom 1). Not a driver/engine bug.\n");
+    if (worst == 0)
+        printf("=> Framebuffer CLEAN at every orientation (0 blends, 0 misplaced, no\n"
+               "   excess). The bleed is NOT in VRAM -- monitor/scanout-side.\n");
     else
-        printf("=> Framebuffer CONTAMINATED (%ld other pixels) at some orientation -- a\n"
-               "   real VRAM artifact; investigate before blaming the monitor.\n", worst_other);
+        printf("=> Framebuffer NOT clean at some orientation -- real VRAM artifact;\n"
+               "   the misplaced/excess lines name the face pair and orientation.\n");
 
     printf("\nDone. Ctrl-C to exit.\n");
     while (running) { if (getchar() == EOF) break; }
