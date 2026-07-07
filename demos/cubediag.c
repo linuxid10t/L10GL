@@ -10,11 +10,14 @@
  *   blue (Left, idx 2)  -> teal Top (idx 5)
  *   green (Front, idx 1)-> purple Bottom (idx 4)
  *
- * This demo renders the SAME path as demos/cube.c (front-end API, L10GL_LESS,
- * fixed face draw order, back-face cull, widened depth range sz=(eye_z+2)/4)
- * but with FULL-SATURATION flat face colors (no lighting dimming) and a static
- * color LEGEND down the right side, so the face in view and the face bleeding
+ * This demo preserves the PRE-FIX cube path (front-end API, L10GL_LESS, fixed
+ * face draw order, back-face cull, widened depth range sz=(eye_z+2)/4) with
+ * FULL-SATURATION flat face colors (no lighting dimming) and a static color
+ * LEGEND down the right side, so the face in view and the face bleeding
  * through can be identified EXACTLY by matching the on-cube color to a swatch.
+ * (demos/cube.c now sorts visible faces back-to-front under L10GL_LEQUAL,
+ * commit d97577a, and renders clean; this diagnostic intentionally keeps the
+ * buggy LESS/fixed-order path as a reference for the Z-fighting it exposed.)
  *
  *   Back=red  Front=green  Left=blue  Right=yellow  Bottom=magenta  Top=cyan
  *   Legend swatches (right side, top->bottom): Back,Front,Left,Right,Bottom,Top
@@ -144,7 +147,7 @@ int main(int argc, char **argv)
 
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);
     l10gl_clear_depth(&ctx, 1.0f);
-    l10gl_depth_func(&ctx, L10GL_LESS);   /* match demos/cube.c (the bug) */
+    l10gl_depth_func(&ctx, L10GL_LESS);   /* pre-fix path: shows the bug cube.c no longer has */
 
     printf("Face colors: Back=red Front=green Left=blue Right=yellow Bottom=magenta Top=cyan\n");
     printf("Legend swatches (right side, top->bottom): Back, Front, Left, Right, Bottom, Top\n");

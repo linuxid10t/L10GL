@@ -162,44 +162,35 @@ its matrix, but tritest already covers 3D+Z at the new layout; the earlier
 HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
 diagnosis below (a depth-range/Z-fight issue, not a Z-buffer failure).
 
-## Open: back-face color bleedthrough (unmasked by tear-free output)
+## Back-face bleedthrough: RESOLVED (pending final hardware confirmation)
 
-Now that the cube is tear-free, back-face color bleeds through the front
-faces — a depth/edge quality issue, NOT a double-buffer regression (the
-shared Z buffer is cleared each frame; the ZBC matrix is FULL). Likely
-pre-existing but hidden by tearing. Suspects, in evidence order:
+Now that the cube is tear-free, back-face color bled through the front faces.
+It was never an engine defect — the Z pipeline is verified correct on silicon
+(ZBC matrix FULL, exact Z-writeback, TdZdX and TdZdY both 1.000). It was two
+layers of precision-limited shared-edge Z-fighting, fixed in two steps:
 
-- **Depth range widened — HELPED but not cured.** `demos/cube.c`
-  `project()` used to map eye-z to a ~0.002 slice of [0,1] (~130 of 65536
-  Z levels separating front/back) → Z-fight at grazing angles. Commit
-  `f8fb056` widened it to `sz = (z_eye + camera_dist − 3) / 4.0` (~32k
-  levels). Bleedthrough is now **"reduced but not gone"** — a residual
-  systematic error remains.
-- **Z-gradient scale — FULLY EXONERATED.** `dztest` measured BOTH per-pixel
-  Z-gradients on silicon at **measured/intended = 1.000** (TdZdX and TdZdY,
-  2026-07-07). TdZdX falsified the 86Box "half-strength" theory; TdZdY (the
-  axis the X probe structurally could not reach — its constant-z left edge
-  sets `slope02 = 0` and `dzdy = 0`, zeroing the programmed `TdZdY`) is also
-  exactly right. Combined with the FULL ZBC matrix and exact Z-writeback,
-  **the entire ViRGE 3D Z pipeline is verified correct on silicon.** The
-  cube's bleedthrough is NOT an engine defect.
-- **Cause = precision-limited Z-fighting of a non-culled cube.** The cube
-  draws all 12 triangles (no back-face cull) and relies on the Z-buffer.
-  With a correct Z engine, front faces occlude back faces everywhere EXCEPT
-  where the two are within ~1 Z-word: shared silhouette edges (exact ties)
-  and grazing-angle overlaps. The cube uses `L10GL_LESS`, so at those tie/
-  near-tie pixels the LATER-drawn front face fails and the earlier-drawn
-  back face shows through. Widening the range (`f8fb056`, ~56k levels) grew
-  the separation and "reduced" it, but cannot eliminate it while the cube
-  still draws its own back faces. **FIX LANDED (`3d4e49c`): back-face
-  culling in `demos/cube.c` — skip faces with `normal_view[2] >= 0`
-  (back-facing under this +Z camera; the normal was already computed for
-  lighting). Pending hardware confirmation. Optional belt-and-suspenders: a
-  two-triangle occlusion acceptance test (z=0.3/0.7, both draw orders) to
-  confirm engine occlusion directly.**
+- **Step 1 — back-face cull (`3d4e49c`).** The cube used to draw all 12
+  triangles (no cull) under `L10GL_LESS`, so back faces Z-fought front faces.
+  Culling away-faces (`normal_view[2] >= 0`, the +Z-camera visibility test;
+  the normal was already computed for lighting) removed the back-vs-front
+  fighting. Result on hardware: "looks better, still occasionally bleeding."
+- **Step 2 — LEQUAL + back-to-front (`d97577a`).** The residual was BETWEEN
+  the 3 visible faces: at a shared silhouette edge two faces have identical
+  z, and under LESS the EARLIER-drawn face won the tie and bled into the
+  later face's edge. `cubediag` confirmed it exactly (blue/Left onto
+  teal/Top; green/Front onto purple/Bottom — the earlier face in the fixed
+  draw order Back,Front,Left,Right,Bottom,Top always won). Switching to
+  `L10GL_LEQUAL` and drawing visible faces back-to-front (sorted by
+  face-center eye-z) hands each shared edge to the nearer face.
+- **Depth range (`f8fb056`):** widened `project()` from a ~0.002 slice of
+  [0,1] to `sz = (z_eye + camera_dist − 3) / 4.0` (~56k Z levels); reduced
+  the grazing-angle fighting and is still correct.
+- **Z-gradient scale — EXONERATED** by `dztest` (TdZdX and TdZdY both
+  1.000); ruled out as a cause.
 
-Repro: `sudo ./cube`. Acceptance test: two overlapping triangles at
-z=0.3/0.7 drawn in both orders occluding identically.
+Verify on hardware: `sudo ./cube` — clean shared edges at all orientations.
+`cubediag` deliberately keeps the pre-fix (`L10GL_LESS`, fixed-order) path as
+a reference for the shared-edge Z-fighting it exposed.
 
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
