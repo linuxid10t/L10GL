@@ -175,20 +175,28 @@ pre-existing but hidden by tearing. Suspects, in evidence order:
   `f8fb056` widened it to `sz = (z_eye + camera_dist − 3) / 4.0` (~32k
   levels). Bleedthrough is now **"reduced but not gone"** — a residual
   systematic error remains.
-- **Z-gradient scale — TdZdX EXONERATED, TdZdY UNTESTED.** `dztest`
-  (2026-07-07) measured the per-pixel X Z-gradient on silicon at
-  **measured/intended = 1.000** — TdZdX is exactly right, FALSIFYING the
-  86Box-cited "TdZdX is half-strength (added to the post-<<1 accumulator,
-  needs 2^16)" claim. (This also makes 86Box's parallel "TdZdY is fine"
-  untrustworthy — it must be measured.) The X probe cannot exercise Y: its
-  constant-z left edge sets `slope02 = 0` and `dzdy = 0`, so the programmed
-  `TdZdY = −dzdy + slope02·dzdx` is 0 — the per-scanline Z edge-walk never
-  runs. dztest now also probes Y (z=f(Y), dzdx=0). **ACTIVE NEXT STEP:** run
-  it — a Y ratio ≠ 1.0 names the bug (×2 if ~0.5); 1.0 exonerates all
-  gradients and pivots to edges/precision.
-- **Edge/precision (secondary):** sub-pixel seam rules and LEQUAL ties at
-  the cube's shared silhouette edges (the V7/V9/V10 Phase-0 thread). Only
-  worth pursuing once both Z-gradient axes are verified 1.0.
+- **Z-gradient scale — FULLY EXONERATED.** `dztest` measured BOTH per-pixel
+  Z-gradients on silicon at **measured/intended = 1.000** (TdZdX and TdZdY,
+  2026-07-07). TdZdX falsified the 86Box "half-strength" theory; TdZdY (the
+  axis the X probe structurally could not reach — its constant-z left edge
+  sets `slope02 = 0` and `dzdy = 0`, zeroing the programmed `TdZdY`) is also
+  exactly right. Combined with the FULL ZBC matrix and exact Z-writeback,
+  **the entire ViRGE 3D Z pipeline is verified correct on silicon.** The
+  cube's bleedthrough is NOT an engine defect.
+- **Cause = precision-limited Z-fighting of a non-culled cube.** The cube
+  draws all 12 triangles (no back-face cull) and relies on the Z-buffer.
+  With a correct Z engine, front faces occlude back faces everywhere EXCEPT
+  where the two are within ~1 Z-word: shared silhouette edges (exact ties)
+  and grazing-angle overlaps. The cube uses `L10GL_LESS`, so at those tie/
+  near-tie pixels the LATER-drawn front face fails and the earlier-drawn
+  back face shows through. Widening the range (`f8fb056`, ~56k levels) grew
+  the separation and "reduced" it, but cannot eliminate it while the cube
+  still draws its own back faces. **FIX LANDED (`3d4e49c`): back-face
+  culling in `demos/cube.c` — skip faces with `normal_view[2] >= 0`
+  (back-facing under this +Z camera; the normal was already computed for
+  lighting). Pending hardware confirmation. Optional belt-and-suspenders: a
+  two-triangle occlusion acceptance test (z=0.3/0.7, both draw orders) to
+  confirm engine occlusion directly.**
 
 Repro: `sudo ./cube`. Acceptance test: two overlapping triangles at
 z=0.3/0.7 drawn in both orders occluding identically.
@@ -255,9 +263,9 @@ never copy):
 - `sudo ./dztest` — per-pixel Z-gradient probe (virge.c only): draws a
   z=f(X) ramp triangle (dzdy=0) and a z=f(Y) ramp triangle (dzdx=0),
   CPU-reads the Z buffer, and reports the rendered per-pixel Z-word slope
-  vs intended for BOTH axes (TdZdX and TdZdY). X verified 1.000 on
-  2026-07-07; Y is the active open measurement (the X probe can't reach
-  it). NOT in `DEMOS` — build explicitly: `make -B BACKEND=virge dztest`.
+  vs intended for BOTH axes (TdZdX and TdZdY). BOTH verified 1.000 on
+  2026-07-07 — the Z-gradient pipeline is silicon-correct. NOT in `DEMOS`
+  — build explicitly: `make -B BACKEND=virge dztest`.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump
