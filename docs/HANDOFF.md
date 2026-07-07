@@ -149,11 +149,18 @@ leaves the slot unset). Demos (`7b4c67b`): cube/textured_cube call it
 after wait_engine each frame; `triangle.c` is static and stays
 single-buffered.
 
-**Verified on hardware:** cube/textured_cube animate tear-free (David,
-2026-07-07). NOTE: a stale `gltritest` binary (Z base 0xea600 + the old
-vsync timeout) was pasted that run because `gltritest` is not in `DEMOS`
-— see the diagnostic-inventory caveat. The cube IS in `DEMOS`, was
-rebuilt, and exercises commits 2–5 end-to-end.
+**Verified on hardware (2026-07-07):** cube/textured_cube animate
+tear-free. `tritest` rebuilt explicitly (`make -B BACKEND=virge tritest`)
+confirms the new layout end-to-end: boot prints `FB base: 0x0 (back buf
+0xea600), Z base: 0x1d4c00` with **no vsync timeout** (commit 2 — the
+takeover's own wait_vsync no longer prints the 250ms warning), and the
+Z-on triangle renders FULL HEIGHT (123339 px, bbox y=[21,579]) — so the
+offset-0 render-target invariant holds and Z-buffering is correct at the
+double-buffer layout. (gltritest still needs an explicit rebuild to re-run
+its matrix, but tritest already covers 3D+Z at the new layout; the earlier
+"stale gltritest" paste is moot.) tritest's own verdict line — "FULL
+HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
+diagnosis below (a depth-range/Z-fight issue, not a Z-buffer failure).
 
 ## Open: back-face color bleedthrough (unmasked by tear-free output)
 
