@@ -236,6 +236,18 @@ int main(int argc, char **argv)
             /* Transform normal to view space for lighting */
             float normal_view[3];
             mat3_transform(normal_view, rot, face_normal);
+
+            /* Back-face cull. The camera sits at the origin looking down
+             * +Z (cube vertices land at eye-z in [4,6]), so a face is
+             * visible iff its view-space normal points back toward the
+             * camera -- a negative Z component. Skipping the away-faces
+             * removes the precision-limited Z-fighting that let back-face
+             * color bleed through front faces at shared silhouette /
+             * grazing-edge pixels (the cube draws with L10GL_LESS, so the
+             * later-drawn front face loses exact ties to the back face). */
+            if (normal_view[2] >= 0.0f)
+                continue;
+
             float intensity = diffuse_light(normal_view);
 
             float r = face_colors[color_idx][0] * intensity;
