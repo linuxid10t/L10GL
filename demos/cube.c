@@ -277,18 +277,28 @@ int main(int argc, char **argv)
             n_vis++;
         }
 
-        /* Insertion sort, far (large eye-z) first. At most 3 visible faces. */
+        /* Insertion sort, far (large eye-z) first. At most 3 visible faces.
+         * MUST move the per-face color (vis_r/g/b) in lockstep with the face
+         * index and depth -- otherwise sorted faces draw with another face's
+         * color (the colors visibly swap as the sort order changes). */
         for (int a = 1; a < n_vis; a++) {
-            int vf = vis_face[a];
+            int   vf = vis_face[a];
             float vd = vis_depth[a];
+            float vr = vis_r[a], vg = vis_g[a], vb = vis_b[a];
             int j = a - 1;
             while (j >= 0 && vis_depth[j] < vd) {
                 vis_face[j + 1]  = vis_face[j];
                 vis_depth[j + 1] = vis_depth[j];
+                vis_r[j + 1]     = vis_r[j];
+                vis_g[j + 1]     = vis_g[j];
+                vis_b[j + 1]     = vis_b[j];
                 j--;
             }
             vis_face[j + 1]  = vf;
             vis_depth[j + 1] = vd;
+            vis_r[j + 1]     = vr;
+            vis_g[j + 1]     = vg;
+            vis_b[j + 1]     = vb;
         }
 
         /* Draw visible faces far-to-near, both triangles per face. */
