@@ -50,6 +50,12 @@ textured_cube: demos/textured_cube.c $(CORE_SRCS) src/l10gl.h src/backends/$(BAC
 triangle: demos/triangle.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
 	$(CC) $(CFLAGS) $(BACKEND_DEFINE) -o $@ demos/triangle.c $(CORE_SRCS) $(LDFLAGS)
 
+# Diagnostic: rotating cube + per-face color legend, to inspect bleedthrough.
+# Same render path as cube (front-end API), but flat full-saturation colors and
+# a static color-key legend on the right. Optional arg freezes an orientation.
+cubediag: demos/cubediag.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
+	$(CC) $(CFLAGS) $(BACKEND_DEFINE) -o $@ demos/cubediag.c $(CORE_SRCS) $(LDFLAGS)
+
 # Diagnostic: CPU-drawn fbdev test pattern, no backend/engine involved.
 # If this displays garbled, the mode is wrong and no engine fix will help.
 fbtest: demos/fbtest.c
