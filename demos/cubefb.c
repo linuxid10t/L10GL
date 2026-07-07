@@ -170,8 +170,8 @@ int main(void)
         }
         long rendered = face_ct[0]+face_ct[1]+face_ct[2]+face_ct[3]+face_ct[4]+face_ct[5];
         if (other > worst_other) worst_other = other;
-        printf("angle %.2f rad: rendered %6ld px, other %4ld, max other-run %d",
-               angle, rendered, other, maxrun);
+        printf("angle %.2f rad: rendered %6ld px (bg %6ld), other %4ld, max other-run %d",
+               angle, rendered, bg, other, maxrun);
         if (other) printf(" at (%d,%d)", srx, sry);
         printf("   faces[r g b y m c]=%ld %ld %ld %ld %ld %ld\n",
                face_ct[0],face_ct[1],face_ct[2],face_ct[3],face_ct[4],face_ct[5]);
