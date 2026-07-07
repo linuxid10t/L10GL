@@ -942,21 +942,22 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
  * ======================================================================== */
 
 /*
- * Compute dX/dY as S11.20 fixed point.
+ * Compute dX/dY as S11.20 fixed point, from S11.20-snapped vertex X.
  * The ViRGE convention (from the 2D line programming examples):
- *   dXdY = -(ΔX / ΔY) * (1 << 20)
- * This gives the slope with inverted sign, matching the engine's
- * bottom-to-top rendering direction.
+ *   dXdY = -(ΔX / ΔY) * (1 << 20)   (ΔX here is already snapped, so no shift)
+ * Inverted sign matches the engine's bottom-to-top rendering direction.
+ *
+ * ΔX is the full-precision snapped vertex X, not (int)-truncated coords:
+ * truncation drifts each walked edge up to ~2px, which for a thin sliver
+ * exceeds its true width and lands the walked non-shared edge on the wrong
+ * side of the shared edge, spilling it onto the neighbor.
  */
-static int32_t compute_dxdy(int x_start, int y_start, int x_end, int y_end)
+static int32_t compute_dxdy_snap(int32_t fx_start, int y_start,
+                                 int32_t fx_end, int y_end)
 {
-    int dx = x_end - x_start;
     int dy = y_end - y_start;
-
-    if (dy == 0) dy = 1;  /* avoid division by zero */
-
-    /* dXdY = -(ΔX << 20) / ΔY */
-    return -(int32_t)(((int64_t)dx << VIRGE_X_FRAC_BITS) / dy);
+    if (dy == 0) dy = 1;
+    return -(int32_t)(((int64_t)(fx_end - fx_start)) / dy);
 }
 
 void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
@@ -998,7 +999,13 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
     float dy20 = v2.y - v0.y;
     float det = dx10 * dy20 - dx20 * dy10;
 
-    if (det == 0.0f)
+    /* Degenerate guard: skip triangles with screen area < ~0.5px² (|det| < 1).
+     * A sub-pixel sliver contributes nothing visible, and skipping moots the
+     * det->0 division and the ill-conditioned attribute gradients. By screen
+     * area, so it is mesh-independent -- it does NOT catch the cube's
+     * thin-but-tall sliver (area >> 0.5px²); the snapped slopes + prestep
+     * below fix that. */
+    if (det > -1.0f && det < 1.0f)
         return;
 
     float inv_det = 1.0f / det;
@@ -1024,9 +1031,14 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
      * Side 01: v0(bottom) → v1(middle)
      * Side 12: v1(middle) → v2(top)
      */
-    int32_t dXdY02 = compute_dxdy((int)v0.x, y_bot, (int)v2.x, y_top);
-    int32_t dXdY01 = compute_dxdy((int)v0.x, y_bot, (int)v1.x, y_mid);
-    int32_t dXdY12 = compute_dxdy((int)v1.x, y_mid, (int)v2.x, y_top);
+    /* Snap vertex X to S11.20 once; every edge X and slope below derives from
+     * these, so walked edges match the true edges to 2^-20 px. */
+    int32_t fx0 = VIRGE_X_FIXED(v0.x);
+    int32_t fx1 = VIRGE_X_FIXED(v1.x);
+    int32_t fx2 = VIRGE_X_FIXED(v2.x);
+    int32_t dXdY02 = compute_dxdy_snap(fx0, y_bot, fx2, y_top);
+    int32_t dXdY01 = compute_dxdy_snap(fx0, y_bot, fx1, y_mid);
+    int32_t dXdY12 = compute_dxdy_snap(fx1, y_mid, fx2, y_top);
 
     /* Determine L/R direction: which side of the triangle is the 02 edge?
      * If v1 is to the left of the v0→v2 line, then side 02 is on the
@@ -1056,13 +1068,17 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
      * not the raw plane dA/dy. */
     float slope02 = (float)dXdY02 / (float)(1 << VIRGE_X_FRAC_BITS);
 
-    /* Span-end X per the engine's edge-walk semantics: TXEND01 is edge
-     * 01's X at the FIRST (bottom) scanline = the bottom vertex X (edges
-     * 01 and 02 both start at v0), NOT the middle vertex; TXEND12 is
-     * edge 12's X at the MIDDLE scanline. Programming middle/top vertex
-     * X here makes the bottom span jump straight to the middle-vertex X. */
-    int32_t x_end01 = VIRGE_X_FIXED(v0.x);  /* edge 01 at bottom scanline */
-    int32_t x_end12 = VIRGE_X_FIXED(v1.x);  /* edge 12 at middle scanline */
+    /* Sub-pixel Y prestep (docs/datasheets/README.md line 168: the part the
+     * hardware does NOT do). TYS is an integer scanline but the vertices sit
+     * at fractional Y; step each edge's X from its vertex by its slope times
+     * the fractional Y distance to the first scanline it owns, so the walked
+     * edge begins at the true edge position. Without this a steep sliver edge
+     * starts up to ~|slope| px off and can land past the shared edge. */
+    float yf0 = v0.y - (float)y_bot;   /* >= 0: bottom vertex up to scanline y_bot */
+    float yf1 = v1.y - (float)y_mid;   /* middle vertex up to scanline y_mid */
+    int32_t x_start = fx0 + (int32_t)((float)dXdY02 * yf0);  /* edge 02 @ y_bot */
+    int32_t x_end01 = fx0 + (int32_t)((float)dXdY01 * yf0);  /* edge 01 @ y_bot */
+    int32_t x_end12 = fx1 + (int32_t)((float)dXdY12 * yf1);  /* edge 12 @ y_mid */
 
     /* Evaluate color and Z at the bottom vertex (the start point) */
     float z_s = v0.z;
@@ -1112,8 +1128,7 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
     virge_write32(ctx, VIRGE_3D_TXEND01, (uint32_t)x_end01);
     virge_write32(ctx, VIRGE_3D_TXEND12, (uint32_t)x_end12);
 
-    virge_write32(ctx, VIRGE_3D_TXS,
-                  (uint32_t)VIRGE_X_FIXED(v0.x));
+    virge_write32(ctx, VIRGE_3D_TXS, (uint32_t)x_start);
     virge_write32(ctx, VIRGE_3D_TYS, (uint32_t)y_bot);
 
     /* --- Program scan counts and L/R direction --- */
@@ -1357,9 +1372,14 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
         return;
 
     /* Edge slopes (same as Gouraud triangle) */
-    int32_t dXdY02 = compute_dxdy((int)v0.x, y_bot, (int)v2.x, y_top);
-    int32_t dXdY01 = compute_dxdy((int)v0.x, y_bot, (int)v1.x, y_mid);
-    int32_t dXdY12 = compute_dxdy((int)v1.x, y_mid, (int)v2.x, y_top);
+    /* Snap vertex X to S11.20 once; every edge X and slope below derives from
+     * these, so walked edges match the true edges to 2^-20 px. */
+    int32_t fx0 = VIRGE_X_FIXED(v0.x);
+    int32_t fx1 = VIRGE_X_FIXED(v1.x);
+    int32_t fx2 = VIRGE_X_FIXED(v2.x);
+    int32_t dXdY02 = compute_dxdy_snap(fx0, y_bot, fx2, y_top);
+    int32_t dXdY01 = compute_dxdy_snap(fx0, y_bot, fx1, y_mid);
+    int32_t dXdY12 = compute_dxdy_snap(fx1, y_mid, fx2, y_top);
 
     /* L/R direction */
     int lr_direction;
