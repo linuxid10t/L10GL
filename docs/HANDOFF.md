@@ -5,8 +5,8 @@ Audience: an implementing agent picking up this project cold. Read
 `docs/datasheets/README.md` (datasheet page index + verified register
 facts) before changing code. Live state: symptom 1 (diagnosed — monitor
 scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
-double-buffering with vsync page-flip (LANDED 2026-07-07); a newly-
-visible back-face bleedthrough quality issue (OPEN).
+double-buffering with vsync page-flip (LANDED 2026-07-07); back-face
+"bleedthrough" = monitor scaling, NOT a driver bug (closed; proven by cubefb).
 
 ## Test setup (fixed, do not re-derive)
 
@@ -162,35 +162,42 @@ its matrix, but tritest already covers 3D+Z at the new layout; the earlier
 HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
 diagnosis below (a depth-range/Z-fight issue, not a Z-buffer failure).
 
-## Back-face bleedthrough: RESOLVED (pending final hardware confirmation)
+## Back-face "bleedthrough": NOT a bug — monitor scaling (closed 2026-07-07)
 
-Now that the cube is tear-free, back-face color bled through the front faces.
-It was never an engine defect — the Z pipeline is verified correct on silicon
-(ZBC matrix FULL, exact Z-writeback, TdZdX and TdZdY both 1.000). It was two
-layers of precision-limited shared-edge Z-fighting, fixed in two steps:
+The cube's visible face-color bleed is NOT in the framebuffer and NOT an
+engine defect. Proven three independent ways on silicon:
 
-- **Step 1 — back-face cull (`3d4e49c`).** The cube used to draw all 12
-  triangles (no cull) under `L10GL_LESS`, so back faces Z-fought front faces.
-  Culling away-faces (`normal_view[2] >= 0`, the +Z-camera visibility test;
-  the normal was already computed for lighting) removed the back-vs-front
-  fighting. Result on hardware: "looks better, still occasionally bleeding."
-- **Step 2 — LEQUAL + back-to-front (`d97577a`).** The residual was BETWEEN
-  the 3 visible faces: at a shared silhouette edge two faces have identical
-  z, and under LESS the EARLIER-drawn face won the tie and bled into the
-  later face's edge. `cubediag` confirmed it exactly (blue/Left onto
-  teal/Top; green/Front onto purple/Bottom — the earlier face in the fixed
-  draw order Back,Front,Left,Right,Bottom,Top always won). Switching to
-  `L10GL_LEQUAL` and drawing visible faces back-to-front (sorted by
-  face-center eye-z) hands each shared edge to the nearer face.
-- **Depth range (`f8fb056`):** widened `project()` from a ~0.002 slice of
-  [0,1] to `sz = (z_eye + camera_dist − 3) / 4.0` (~56k Z levels); reduced
-  the grazing-angle fighting and is still correct.
-- **Z-gradient scale — EXONERATED** by `dztest` (TdZdX and TdZdY both
-  1.000); ruled out as a cause.
+- **Z pipeline correct:** ZBC matrix FULL, exact Z-writeback, TdZdX and
+  TdZdY both measured/intended = 1.000 (see Symptom 2 / dztest).
+- **Coverage watertight:** `seamtest` shows NO shared-edge double-draw (the
+  two-triangle overlap test's boundary column did not flip with draw order)
+  and the start/end fill rules combine to a clean partition in every
+  configuration (left triangle fills to N−1, right from N).
+- **Framebuffer clean:** `cubefb` renders the cube at 5 orientations and
+  CPU-reads VRAM back (bypassing the monitor): **0 contaminated pixels at
+  every angle**, and the middle-row color sequence is clean solid runs per
+  face (e.g. `bg, red 270px, yellow 52px, bg`).
 
-Verify on hardware: `sudo ./cube` — clean shared edges at all orientations.
-`cubediag` deliberately keeps the pre-fix (`L10GL_LESS`, fixed-order) path as
-a reference for the shared-edge Z-fighting it exposed.
+So the cube's VRAM is correct — each face a uniform color with sharp 1px
+boundaries. The bleed on the physical monitor is that monitor's 1.8× non-
+integer scaling (800→1440) blending the correct 1px boundaries into ~2px
+color fringes — the SAME root cause as symptom 1 (parked; not driver-fixable
+without native-res scanout).
+
+Investigation trail (all ruled out as a driver/engine cause):
+- **Back-face cull (`3d4e49c`, KEPT — correct hygiene):** the cube's
+  per-face normal is used to skip away-faces (`normal_view[2] >= 0`).
+- **LEQUAL + back-to-front sort (`d97577a`, then REVERTED `3d3a579`):** added
+  on a wrong "shared-edge Z-tie" model. seamtest proved coverage watertight,
+  so draw order / depth-func are irrelevant to edges; reverted to LESS +
+  fixed face order + cull.
+- **Depth range (`f8fb056`, KEPT):** `sz = (z_eye + camera_dist − 3)/4.0`
+  (~56k Z levels) — still correct, reduced grazing-angle noise.
+- **Z-gradient scale — exonerated** by `dztest` (TdZdX/TdZdY = 1.000).
+
+Diagnostics retained: `cubediag` (interactive cube + color legend, pre-fix
+LESS path), `seamtest` (fill-rule / watertight proof), `cubefb` (readback
+proof that VRAM is clean).
 
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
@@ -259,10 +266,22 @@ never copy):
   — build explicitly: `make -B BACKEND=virge dztest`.
 - `sudo ./cubediag [angle_deg]` — rotating cube + per-face color legend
   (front-end path, same as cube.c). Full-saturation flat face colors + a
-  static color-key on the right, to identify exactly which VISIBLE face
-  bleeds through which (the shared-edge Z-fighting residual after back-face
-  culling). An angle arg freezes one orientation and prints which faces are
-  visible; otherwise slow-rotates. Build: `make -B BACKEND=virge cubediag`.
+  static color-key on the right, to identify which face is which while
+  inspecting the (monitor-side) bleed. An angle arg freezes one orientation
+  and prints which faces are visible; otherwise slow-rotates. Build:
+  `make -B BACKEND=virge cubediag`.
+- `sudo ./seamtest` — measures the S3d triangle span fill rule on silicon
+  (start/end edge, both L/R directions, integer vs half-integer X) and runs
+  a two-triangle shared-edge overlap check. Result: coverage is WATERTIGHT
+  (no double-draw) -- the end edge is exclusive for L/R=1, inclusive for
+  L/R=0, combining to a clean partition at every shared edge. Refutes the
+  "double-draw" bleed hypothesis. Build: `make -B BACKEND=virge seamtest`.
+- `sudo ./cubefb` — renders the cube at several orientations and CPU-reads
+  the framebuffer back (bypassing the monitor), classifying every pixel as a
+  face color / background / contamination. Result: 0 contaminated pixels at
+  every orientation -- the cube's VRAM is clean, so the visible bleed is the
+  monitor's scaling. The decisive monitor-vs-VRAM test. Build:
+  `make -B BACKEND=virge cubefb`.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump
