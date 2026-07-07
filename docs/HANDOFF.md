@@ -266,6 +266,12 @@ never copy):
   vs intended for BOTH axes (TdZdX and TdZdY). BOTH verified 1.000 on
   2026-07-07 — the Z-gradient pipeline is silicon-correct. NOT in `DEMOS`
   — build explicitly: `make -B BACKEND=virge dztest`.
+- `sudo ./cubediag [angle_deg]` — rotating cube + per-face color legend
+  (front-end path, same as cube.c). Full-saturation flat face colors + a
+  static color-key on the right, to identify exactly which VISIBLE face
+  bleeds through which (the shared-edge Z-fighting residual after back-face
+  culling). An angle arg freezes one orientation and prints which faces are
+  visible; otherwise slow-rotates. Build: `make -B BACKEND=virge cubediag`.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump
