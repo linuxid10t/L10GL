@@ -6,7 +6,8 @@ Audience: an implementing agent picking up this project cold. Read
 facts) before changing code. Live state: symptom 1 (diagnosed — monitor
 scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
 double-buffering with vsync page-flip (LANDED 2026-07-07); back-face
-"bleedthrough" = monitor scaling, NOT a driver bug (closed; proven by cubefb).
+"bleedthrough" cause UNRESOLVED — NOT the monitor (the "monitor scaling"
+call was retracted; cubefb proves only the static framebuffer is clean).
 
 ## Test setup (fixed, do not re-derive)
 
@@ -162,10 +163,23 @@ its matrix, but tritest already covers 3D+Z at the new layout; the earlier
 HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
 diagnosis below (a depth-range/Z-fight issue, not a Z-buffer failure).
 
-## Back-face "bleedthrough": NOT a bug — monitor scaling (closed 2026-07-07)
+## Back-face "bleedthrough": UNRESOLVED — NOT the monitor (retracted 2026-07-07)
 
-The cube's visible face-color bleed is NOT in the framebuffer and NOT an
-engine defect. Proven three independent ways on silicon:
+**RETRACTION:** the earlier "monitor scaling, closed — not a bug" conclusion
+was an overreach and is WRONG. David rules out the monitor: scaling blends
+adjacent colors into a fringe, it does not bleed pure face colors *through*.
+`cubefb` proves only that a single STATIC, flat-shaded render is clean in
+VRAM — it does NOT exercise the cube's actual path (Gouraud + animation +
+double-buffer page-flip + a Z buffer shared across frames), all of which is
+driver/engine code and the real suspect. **Cause unknown; not the monitor.**
+Open discriminator: does the bleed appear in a single static frame
+(`L10GL_STATIC=1 sudo ./cube`) or only during animation? Static => per-frame
+in VRAM (read that exact Gouraud frame back at the failing angle); animated
+only => double-buffer / swap / Z-clear timing.
+
+The silicon facts below (Z pipeline correct, coverage watertight, static
+framebuffer clean) all stand — only the "therefore the monitor" attribution
+is retracted:
 
 - **Z pipeline correct:** ZBC matrix FULL, exact Z-writeback, TdZdX and
   TdZdY both measured/intended = 1.000 (see Symptom 2 / dztest).
