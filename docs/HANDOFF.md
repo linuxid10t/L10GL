@@ -355,6 +355,26 @@ NOT in VRAM (cubefb reads VRAM directly and is clean). The back-face
 "bleedthrough" axis is ALSO resolved — David confirms no bleed is
 visible on the live monitor (see the section below).
 
+**2026-07-08 follow-up #5 — NEW open axis: textured_cube mapping
+unverified.** With the flat cube fully clean, David reports textured_cube
+"still isn't right." It was the one demo never silicon-verified (line 180
+only ever confirmed it animates/swaps, not that texture mapping is
+correct). Two concrete suspects in the texture path:
+  - `virge.c:tex_coord_fixed()` stores `val * 2^(27-s)` but its own
+    doc-comment says "U_texel = u * (tex_width-1)" — the `*(tex_width-1)`
+    factor is missing, so UV may collapse to texel 0 (engine sampling a
+    1-texel-wide stripe instead of the full texture).
+  - `textured_cube.c` has NO back-face cull (the perspective cull
+    `3d4e49c` went into cube/cubefb/cubediag only), so it draws all 12
+    tris relying purely on Z=LESS — a separate potential artifact source.
+**Diagnostic `texprobe` added** (demos/texprobe.c): renders a face-on quad
+(constant w, no perspective confound) with a UV-ENCODING 64x64 texture
+(texel color = its own u,v), drives the REAL frontend bind/upload/draw
+path, then CPU-reads the framebuffer — the sampled color per pixel IS the
+(u,v) the engine computed. Correct => R rises 0..31 L->R, G 0..31 T->B;
+collapsed UV => R,G stuck ~0. Run `sudo ./texprobe`; paste the R/G grids
++ auto-verdict. Build: `make -B BACKEND=virge texprobe`.
+
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
 Register-file architecture, from the MMIO decode in 86Box

@@ -39,7 +39,7 @@ DEMOS = cube textured_cube triangle cubediag fbtest
 
 # Diagnostics: virge-direct chip probes (link virge.c explicitly, independent
 # of BACKEND) that drive the hardware and CPU-read VRAM back. Built by default.
-TESTS = scantest filltest tritest gltritest fliptest dztest seamtest cubefb diagap
+TESTS = scantest filltest tritest gltritest fliptest dztest seamtest cubefb diagap texprobe
 
 .PHONY: all clean
 
@@ -51,6 +51,12 @@ cube: demos/cube.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
 
 textured_cube: demos/textured_cube.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
 	$(CC) $(CFLAGS) $(BACKEND_DEFINE) -o $@ demos/textured_cube.c $(CORE_SRCS) $(LDFLAGS)
+
+# Diagnostic: face-on UV-gradient textured quad + framebuffer readback, to
+# verify the textured-triangle path's UV scaling/perspective (the one demo
+# path never silicon-verified). Uses the frontend API (real bind/upload).
+texprobe: demos/texprobe.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
+	$(CC) $(CFLAGS) $(BACKEND_DEFINE) -o $@ demos/texprobe.c $(CORE_SRCS) $(LDFLAGS)
 
 triangle: demos/triangle.c $(CORE_SRCS) src/l10gl.h src/backends/$(BACKEND)/$(BACKEND).h
 	$(CC) $(CFLAGS) $(BACKEND_DEFINE) -o $@ demos/triangle.c $(CORE_SRCS) $(LDFLAGS)
