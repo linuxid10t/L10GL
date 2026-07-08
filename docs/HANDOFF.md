@@ -6,8 +6,10 @@ Audience: an implementing agent picking up this project cold. Read
 facts) before changing code. Live state: symptom 1 (diagnosed — monitor
 scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
 double-buffering with vsync page-flip (LANDED 2026-07-07); back-face
-"bleedthrough" cause UNRESOLVED — NOT the monitor (the "monitor scaling"
-call was retracted; cubefb proves only the static framebuffer is clean).
+"bleedthrough" — root cause identified 2026-07-08 (orthographic back-face
+cull draws barely-back-facing slivers inside front faces; missing
+attribute-base prestep inflates their near-tie Z) — fix landed, awaiting
+the cubefb 36-sweep re-run on silicon for the CLEAN verdict.
 
 ## Test setup (fixed, do not re-derive)
 
@@ -161,46 +163,64 @@ double-buffer layout. (gltritest still needs an explicit rebuild to re-run
 its matrix, but tritest already covers 3D+Z at the new layout; the earlier
 "stale gltritest" paste is moot.) tritest's own verdict line — "FULL
 HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
-diagnosis below (a depth-range/Z-fight issue, not a Z-buffer failure).
+diagnosis below (a culling/setup issue, not a Z-buffer failure).
 
-## Back-face "bleedthrough": UNRESOLVED — NOT the monitor (retracted 2026-07-07)
+## Back-face "bleedthrough": root cause identified 2026-07-08 — fix landed, awaiting silicon verdict
 
-**RETRACTION:** the earlier "monitor scaling, closed — not a bug" conclusion
-was an overreach and is WRONG. David rules out the monitor: scaling blends
-adjacent colors into a fringe, it does not bleed pure face colors *through*.
-`cubefb` proves only that a single STATIC, flat-shaded render is clean in
-VRAM — it does NOT exercise the cube's actual path (Gouraud + animation +
-double-buffer page-flip + a Z buffer shared across frames), all of which is
-driver/engine code and the real suspect. **Cause unknown; not the monitor.**
-Open discriminator: does the bleed appear in a single static frame
-(`L10GL_STATIC=1 sudo ./cube`) or only during animation? Static => per-frame
-in VRAM (read that exact Gouraud frame back at the failing angle); animated
-only => double-buffer / swap / Z-clear timing.
+(History: the "monitor scaling, closed" call of 2026-07-07 was retracted the
+same day — scaling blends colors into a fringe, it does not bleed pure face
+colors through. The early cubefb only checked blends at 5 orientations;
+solid misplaced face color was invisible to it.)
 
-The silicon facts below (Z pipeline correct, coverage watertight, static
-framebuffer clean) all stand — only the "therefore the monitor" attribution
-is retracted:
+The upgraded `cubefb` (36-orientation sweep; blends + MISPLACED + excess
+signals) settled the discriminator: the bleed IS a per-frame VRAM artifact
+(10/36 orientations contaminated; 9/36 after the snapped-slope + edge-X
+prestep commit `25786e7`). It is NOT animation/swap/monitor.
 
+**Diagnosis** (per-elimination): seamtest proves two front-facing faces
+never generate fragments for the same pixel (watertight partition), so Z
+never arbitrates between them and no front-front pair can contaminate. The
+remaining fragment source inside a front face is a face that should have
+been culled: the demos' `normal_view[2] >= 0` test is the ORTHOGRAPHIC
+approximation, which at camera_dist=5 mis-classifies faces within ~11° of
+edge-on. A barely-back-facing sliver projects INSIDE the silhouette,
+overlapping its front neighbor with near-tied Z along their shared edge —
+exactly the "misplaced solid face color" signal, only near edge-on. Its
+visibility was amplified by a second, backend-side gap: the attribute bases
+(TZS etc.) were still sampled at the raw bottom vertex after `25786e7`
+moved (TXS, TYS) to the prestepped scanline position, biasing each
+triangle's Z by up to one edge-walk step — many 16-bit LSBs on a steep
+near-edge-on face — which inflates near-tie noise.
+
+**Fix (this commit, UNVERIFIED on silicon — re-run `cubefb` for the
+verdict, expected 9 → 0):**
+- Perspective-correct cull in cube/cubefb/cubediag:
+  `dot(normal_view, center_view) >= 0` skips the face (exact for planar
+  faces; unit-cube center == normal, so `center_view = normal_view +
+  (0,0,CAMERA_DIST)`).
+- Backend: attribute bases (Z, colors, and U/V/W in the textured path) are
+  now prestepped along edge 02 to (TXS, TYS) — the missing half of the
+  README §prestep. Textured path also gained the snapped-slope edge prestep
+  and the |det| < 1 degenerate guard for parity with the Gouraud path.
+- `cubefb` now pins `z_cmd_bits` to LESS (the glue state cube.c runs
+  under); it previously ran on the virge_init LEQUAL default, a different
+  near-tie tie-break than the demo it instruments.
+
+Silicon facts that stand (and constrain any future theory):
 - **Z pipeline correct:** ZBC matrix FULL, exact Z-writeback, TdZdX and
   TdZdY both measured/intended = 1.000 (see Symptom 2 / dztest).
 - **Coverage watertight:** `seamtest` shows NO shared-edge double-draw (the
   two-triangle overlap test's boundary column did not flip with draw order)
   and the start/end fill rules combine to a clean partition in every
   configuration (left triangle fills to N−1, right from N).
-- **Framebuffer clean:** `cubefb` renders the cube at 5 orientations and
-  CPU-reads VRAM back (bypassing the monitor): **0 contaminated pixels at
-  every angle**, and the middle-row color sequence is clean solid runs per
-  face (e.g. `bg, red 270px, yellow 52px, bg`).
+- **Contamination is orientation-gated:** only near-edge-on configurations
+  (Top near-parallel + Left near-perpendicular) — the cull-wedge signature.
 
-So the cube's VRAM is correct — each face a uniform color with sharp 1px
-boundaries. The bleed on the physical monitor is that monitor's 1.8× non-
-integer scaling (800→1440) blending the correct 1px boundaries into ~2px
-color fringes — the SAME root cause as symptom 1 (parked; not driver-fixable
-without native-res scanout).
-
-Investigation trail (all ruled out as a driver/engine cause):
-- **Back-face cull (`3d4e49c`, KEPT — correct hygiene):** the cube's
-  per-face normal is used to skip away-faces (`normal_view[2] >= 0`).
+Investigation trail:
+- **Back-face cull (`3d4e49c`, test CORRECTED 2026-07-08):** the original
+  `normal_view[2] >= 0` orthographic test was itself the residual-bleed
+  culprit; replaced with the perspective dot-product test in all three
+  cube demos.
 - **LEQUAL + back-to-front sort (`d97577a`, then REVERTED `3d3a579`):** added
   on a wrong "shared-edge Z-tie" model. seamtest proved coverage watertight,
   so draw order / depth-func are irrelevant to edges; reverted to LESS +
@@ -209,9 +229,9 @@ Investigation trail (all ruled out as a driver/engine cause):
   (~56k Z levels) — still correct, reduced grazing-angle noise.
 - **Z-gradient scale — exonerated** by `dztest` (TdZdX/TdZdY = 1.000).
 
-Diagnostics retained: `cubediag` (interactive cube + color legend, pre-fix
-LESS path), `seamtest` (fill-rule / watertight proof), `cubefb` (readback
-proof that VRAM is clean).
+Diagnostics retained: `cubediag` (interactive cube + color legend, same
+LESS path as cube), `seamtest` (fill-rule / watertight proof), `cubefb`
+(36-sweep contamination detector — the verdict tool for this fix).
 
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
@@ -290,12 +310,13 @@ never copy):
   (no double-draw) -- the end edge is exclusive for L/R=1, inclusive for
   L/R=0, combining to a clean partition at every shared edge. Refutes the
   "double-draw" bleed hypothesis. Build: `make -B BACKEND=virge seamtest`.
-- `sudo ./cubefb` — renders the cube at several orientations and CPU-reads
-  the framebuffer back (bypassing the monitor), classifying every pixel as a
-  face color / background / contamination. Result: 0 contaminated pixels at
-  every orientation -- the cube's VRAM is clean, so the visible bleed is the
-  monitor's scaling. The decisive monitor-vs-VRAM test. Build:
-  `make -B BACKEND=virge cubefb`.
+- `sudo ./cubefb [N]` — sweeps N (default 36) orientations, CPU-reads the
+  framebuffer back (bypassing the monitor), and reports three contamination
+  signals per angle: BLENDS, MISPLACED (solid face color inside another
+  face — the direct "blue on teal" detector), and EXCESS (info only).
+  History: 10/36 contaminated before `25786e7`, 9/36 after; this is the
+  verdict tool for the 2026-07-08 cull + base-prestep fix (expected 0).
+  Build: `make -B BACKEND=virge cubefb`.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump

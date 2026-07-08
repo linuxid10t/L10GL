@@ -147,7 +147,7 @@ int main(int argc, char **argv)
 
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);
     l10gl_clear_depth(&ctx, 1.0f);
-    l10gl_depth_func(&ctx, L10GL_LESS);   /* pre-fix path: shows the bug cube.c no longer has */
+    l10gl_depth_func(&ctx, L10GL_LESS);   /* same depth state as cube.c */
 
     printf("Face colors: Back=red Front=green Left=blue Right=yellow Bottom=magenta Top=cyan\n");
     printf("Legend swatches (right side, top->bottom): Back, Front, Left, Right, Bottom, Top\n");
@@ -195,8 +195,11 @@ int main(int argc, char **argv)
             }
             float nv[3];
             mat3_transform(nv, rot, fn);
-            if (nv[2] >= 0.0f)
-                continue;   /* back-face cull (same test as cube.c) */
+            /* Perspective-correct back-face cull (same test as cube.c):
+             * visible iff dot(normal, center - eye) < 0; unit-cube face
+             * center == normal, eye at origin, cube center at z = +5. */
+            if (nv[0]*nv[0] + nv[1]*nv[1] + nv[2]*(nv[2] + 5.0f) >= 0.0f)
+                continue;
 
             float r = face_colors[ci][0];
             float g = face_colors[ci][1];

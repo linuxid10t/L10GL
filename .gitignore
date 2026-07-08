@@ -6,3 +6,14 @@ textured_cube
 *.elf
 *.bin
 mga1064_datasheet.txt
+triangle
+cubediag
+cubefb
+dztest
+fbtest
+filltest
+fliptest
+gltritest
+scantest
+seamtest
+tritest

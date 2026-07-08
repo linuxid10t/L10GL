@@ -27,6 +27,10 @@
 
 #define PI 3.14159265358979323846f
 
+/* Eye-to-cube-center distance (view space: camera at origin, +Z into
+ * the screen). Used by both the projection and the back-face cull. */
+#define CAMERA_DIST 5.0f
+
 /* Build a rotation matrix for combined X and Y rotation.
  * Result is RotY * RotX, row-major 3x3. */
 static void build_rotation(float m[3][3], float angle_x, float angle_y)
@@ -214,7 +218,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < 8; i++) {
             mat3_transform(transformed[i], rot, cube_verts[i]);
             project(&projected[i], transformed[i],
-                    width, height, 5.0f);
+                    width, height, CAMERA_DIST);
         }
 
         /* Draw all 12 triangles in fixed face order, skipping back-faces.
@@ -238,10 +242,21 @@ int main(int argc, char **argv)
             float normal_view[3];
             mat3_transform(normal_view, rot, face_normal);
 
-            /* Back-face cull: camera at origin looking +Z, so a face is
-             * visible iff its view-space normal points back toward the
-             * camera (a negative Z component). */
-            if (normal_view[2] >= 0.0f)
+            /* Back-face cull, perspective-correct: a planar face is
+             * visible iff the eye is on its front side, i.e.
+             * dot(normal, center - eye) < 0 with the eye at the view-space
+             * origin. The old normal_view[2] >= 0 test is the orthographic
+             * approximation -- it mis-classifies faces within ~11 deg of
+             * edge-on at this camera distance, letting barely-back-facing
+             * slivers render INSIDE their front neighbors (the residual
+             * cubefb "misplaced face color" contamination). For the unit
+             * cube the model-space face center IS the face normal, so
+             * center_view = normal_view + the camera offset. */
+            float center_view[3] = { normal_view[0], normal_view[1],
+                                     normal_view[2] + CAMERA_DIST };
+            if (normal_view[0] * center_view[0] +
+                normal_view[1] * center_view[1] +
+                normal_view[2] * center_view[2] >= 0.0f)
                 continue;
 
             float intensity = diffuse_light(normal_view);

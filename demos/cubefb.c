@@ -147,7 +147,12 @@ static void measure(struct virge_ctx *vctx, uint8_t *vram, int W, int H,
         case 5: fn[0]=0;  fn[1]=1;  fn[2]=0;  break;
         }
         float nv[3]; mat3_transform(nv, rot, fn);
-        if (nv[2] >= 0.0f) continue;
+        /* Perspective-correct cull (same as cube.c): visible iff
+         * dot(normal, center - eye) < 0; unit-cube face center == normal,
+         * eye at origin, cube center at z = +5. The old nv[2] >= 0 test
+         * let barely-back-facing slivers through within ~11 deg of
+         * edge-on -- the fragment source for the "misplaced" signal. */
+        if (nv[0]*nv[0] + nv[1]*nv[1] + nv[2]*(nv[2] + 5.0f) >= 0.0f) continue;
         float r = face_colors[ci][0], g = face_colors[ci][1], b = face_colors[ci][2];
         int i0 = cube_faces[face][0], i1 = cube_faces[face][1], i2 = cube_faces[face][2];
         struct virge_vertex v0 = { .x=projected[i0].sx, .y=projected[i0].sy, .z=projected[i0].sz, .w=1, .r=r, .g=g, .b=b, .a=1 };
@@ -236,6 +241,10 @@ int main(int argc, char **argv)
     struct virge_ctx vctx;
     memset(&vctx, 0, sizeof(vctx));
     if (virge_init(&vctx, 800, 600, 2) < 0) { fprintf(stderr, "init failed\n"); return 1; }
+    /* Match the depth state cube.c runs under (the glue seeds LESS); the
+     * virge_init default is LEQUAL, which flips who wins near-tie pixels
+     * and would make this probe measure a different config than cube. */
+    vctx.z_cmd_bits = VIRGE_ZB_NORMAL | VIRGE_ZBC_LESS | VIRGE_ZUP_ENABLE;
     struct sigaction sa; memset(&sa, 0, sizeof(sa)); sa.sa_handler = sighandler;
     sigaction(SIGINT, &sa, NULL); sigaction(SIGTERM, &sa, NULL);
 
