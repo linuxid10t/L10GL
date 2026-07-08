@@ -237,6 +237,91 @@ static void edge12_profile(struct virge_ctx *vctx, uint8_t *vram, uint32_t strid
     }
 }
 
+/* EDGE-01 (bottom-half END edge) per-row profile -- the TXEND01 CONTINUOUS
+ * path, the unmeasured twin of edge-12's TXEND12 reload path.
+ *
+ * cubefb's 310-deg Left-face notch is a shared diagonal that is edge-12 in
+ * tri {0,4,7} but edge-01 in tri {0,7,3}. virge.c programs that edge
+ * IDENTICALLY into both -- same edge_x_at seed, same edge_slope; only the
+ * DESTINATION register differs (TXEND12/TdXdY12 vs TXEND01/TdXdY01). So a
+ * gap can open only if the hardware STEPS the two paths differently. The
+ * EDGE-12 probe above measured the TXEND12 reload path's per-row drift;
+ * this measures the TXEND01 continuous path on the SAME edge geometry
+ * (scan_01=48, slope mag 4 px/row, yf at the y_bot seed). If edge-01's
+ * drift differs from edge-12's by ~the notch width at the matching depth
+ * (~row 12 for the cube), the slot-mismatch root cause is confirmed and
+ * the divergence is quantified for a compensation fix. If they match,
+ * drift is ruled out and the gap lives elsewhere.
+ *
+ * edge-01 = v0(bot)->v1(mid); the far vertex v2 sits above y_mid. With v2
+ * above, sl+ yields lr1 and sl- yields lr0 (the natural pairings) -- drift
+ * is lr-symmetric, so these compare directly to edge-12's sl+ lr0 / sl- lr1
+ * configs. sl+ lr1 here IS the cube's edge-01 triangle ({0,7,3}).
+ */
+static void edge01_profile(struct virge_ctx *vctx, uint8_t *vram, uint32_t stride,
+                           const char *label,
+                           float x0, float y0, float x1, float y1,
+                           float x2, float y2)
+{
+    int W = vctx->width, H = vctx->height;
+    clear_fb(vram, W, H, stride);
+    virge_clear_z(vctx, 1.0f);
+    virge_wait_engine(vctx);
+
+    struct virge_vertex v0 = { .x=x0, .y=y0, .z=0.5f, .w=1, .r=1, .g=1, .b=1, .a=1 };
+    struct virge_vertex v1 = { .x=x1, .y=y1, .z=0.5f, .w=1, .r=1, .g=1, .b=1, .a=1 };
+    struct virge_vertex v2 = { .x=x2, .y=y2, .z=0.5f, .w=1, .r=1, .g=1, .b=1, .a=1 };
+    virge_draw_triangle_gouraud(vctx, v0, v1, v2);
+    virge_wait_engine(vctx);
+
+    /* sort y desc to label rows the way virge.c does (v0=bottom, v1=mid, v2=top) */
+    float sy0=y0, sy1=y1, sy2=y2, sx0=x0, sx1=x1, sx2=x2;
+    if (sy0 < sy1) { float t=sy0; sy0=sy1; sy1=t; t=sx0; sx0=sx1; sx1=t; }
+    if (sy1 < sy2) { float t=sy1; sy1=sy2; sy2=t; t=sx1; sx1=sx2; sx2=t; }
+    if (sy0 < sy1) { float t=sy0; sy0=sy1; sy1=t; t=sx0; sx0=sx1; sx1=t; }
+    int y_bot=(int)sy0, y_mid=(int)sy1, y_top=(int)sy2;
+    float cross=(sx2-sx0)*(sy1-sy0)-(sx1-sx0)*(sy2-sy0);
+    int lr = (cross > 0) ? 1 : 0;
+    int scan_01 = y_bot - y_mid, scan_12 = y_mid - y_top;
+
+    int32_t fx0 = e12_xfixed(sx0), fx1 = e12_xfixed(sx1);
+    int32_t dY01 = e12_dxdy(fx0, y_bot, fx1, y_mid);          /* S11.20 px per row-up */
+    float yf0 = sy0 - (float)y_bot;
+    int64_t x_end01 = (int64_t)fx0 + (int64_t)(dY01 * yf0);   /* S11.20, edge01 @ y_bot */
+    float dY01_px = (float)dY01 / 1048576.0f;
+
+    printf("\n%s: lr=%d  dXdY01=%+.4f px/row  scan_01=%d scan_12=%d  "
+           "y_bot=%.2f (yf0=%.2f) y_mid=%.2f  (1 step = %+.3f px)\n",
+           label, lr, dY01_px, scan_01, scan_12, sy0, yf0, sy1, dY01_px);
+    printf("  %-4s %-9s %-9s %-9s %-8s %-8s\n",
+           "row", "true", "model", "meas", "drift", "bias");
+    printf("  %-4s %-9s %-9s %-9s %-8s %-8s\n",
+           "", "", "(intended)", "(silicon)", "m-t", "meas-mod");
+
+    for (int y = y_bot; y > y_mid; y--) {
+        /* true edge-01 X at row y (interp v0->v1) */
+        float t = (sy0 != sy1) ? (sy0 - y) / (sy0 - sy1) : 0.0f;
+        if (t < 0) t = 0;
+        if (t > 1) t = 1;
+        float true_x = sx0 + (sx1 - sx0) * t;
+        /* modeled walked edge-01 X: TXEND01 + (y_bot - y)*dY01, S11.20 */
+        int64_t mod_fixed = x_end01 + (int64_t)(y_bot - y) * (int64_t)dY01;
+        float mod_x = (double)mod_fixed / 1048576.0;
+        /* modeled fill extent (seamtest END rule): lr=0 first=ceil(X), lr=1 last=ceil(X)-1 */
+        int64_t ce = (mod_fixed + 0xFFFFF) >> 20;   /* ceil, mod_fixed is positive here */
+        int mod_ext = lr ? (int)ce - 1 : (int)ce;
+        /* measured filled extent on the edge-01 side */
+        const uint16_t *row = (const uint16_t *)(vram + (size_t)y * stride);
+        int meas_ext = -1;
+        if (lr == 0) { for (int x=0; x<W; x++) if (row[x]) { meas_ext=x; break; } }   /* min x */
+        else         { for (int x=W-1; x>=0; x--) if (row[x]) { meas_ext=x; break; } } /* max x */
+        float drift = mod_x - true_x;
+        int bias = (meas_ext >= 0) ? meas_ext - mod_ext : 0;
+        printf("  %-4d %-9.3f %-9.3f %-9d %-8.3f %-8d\n",
+               y, true_x, mod_x, meas_ext, drift, bias);
+    }
+}
+
 int main(void)
 {
     struct virge_ctx vctx;
@@ -305,6 +390,20 @@ int main(void)
     /* scan_01=0: flat-bottom (y_bot==y_mid), immediate reload -- cube-corner config. */
     edge12_profile(&vctx, vram, stride, "lr0 sl+ flat  ", 750,400.25,  60,400.25, 252,352);
     edge12_profile(&vctx, vram, stride, "lr1 sl- flat  ",  40,400.25, 730,400.25, 538,352);
+
+    printf("\n=== EDGE-01 (bottom-half END edge) per-row profile ===\n");
+    printf("  Compare the DRIFT column to EDGE-12 above. The cube's 310-deg diagonal\n");
+    printf("  is edge-12 in tri{0,4,7} but edge-01 in tri{0,7,3}; virge.c programs it\n");
+    printf("  identically, so any DRIFT difference here vs EDGE-12 = the hardware\n");
+    printf("  TXEND01-vs-TXEND12 step asymmetry = the notch. sl+ lr1 == cube's tri B.\n");
+    /* Same edge geometry as edge-12 (scan_01=48, slope mag 4 px/row, yf at the
+     * y_bot seed) so the drift columns are directly comparable. edge-01 is
+     * v0(bot)->v1(mid); v2 above y_mid. sl+ -> lr1, sl- -> lr0 (natural
+     * pairings; drift is lr-symmetric). */
+    edge01_profile(&vctx, vram, stride, "sl+ yf.25",  60,500.25, 252,452, 750,300);
+    edge01_profile(&vctx, vram, stride, "sl+ yf.75",  60,500.75, 252,452, 750,300);
+    edge01_profile(&vctx, vram, stride, "sl- yf.25", 252,500.25,  60,452,  40,300);
+    edge01_profile(&vctx, vram, stride, "sl- yf.75", 252,500.75,  60,452,  40,300);
 
     printf("\nProbe complete. Ctrl-C to exit.\n");
     while (running) { if (getchar() == EOF) break; }
