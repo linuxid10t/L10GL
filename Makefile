@@ -39,7 +39,7 @@ DEMOS = cube textured_cube triangle cubediag fbtest
 
 # Diagnostics: virge-direct chip probes (link virge.c explicitly, independent
 # of BACKEND) that drive the hardware and CPU-read VRAM back. Built by default.
-TESTS = scantest filltest tritest gltritest fliptest dztest seamtest cubefb
+TESTS = scantest filltest tritest gltritest fliptest dztest seamtest cubefb diagap
 
 .PHONY: all clean
 
@@ -113,6 +113,13 @@ seamtest: demos/seamtest.c src/backends/virge/virge.c src/backends/virge/virge.h
 # monitor) to test whether the bleedthrough is in the framebuffer or monitor-side.
 cubefb: demos/cubefb.c src/backends/virge/virge.c src/backends/virge/virge.h
 	$(CC) $(CFLAGS) -o $@ demos/cubefb.c src/backends/virge/virge.c $(LDFLAGS)
+
+# Diagnostic: reproduce the cube's Left-face shared-diagonal notch in
+# isolation (A-alone / B-alone / both Z=LESS x2 orders / both Z=ALWAYS) to
+# split coverage-regime vs Z/draw-order. Virge-specific, links only the
+# chip driver (no frontend); CPU-reads VRAM after each pass.
+diagap: demos/diagap.c src/backends/virge/virge.c src/backends/virge/virge.h
+	$(CC) $(CFLAGS) -o $@ demos/diagap.c src/backends/virge/virge.c $(LDFLAGS)
 
 clean:
 	rm -f $(DEMOS) $(TESTS) *.o src/*.o src/backends/*/*.o
