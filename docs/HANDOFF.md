@@ -33,6 +33,26 @@ prestep) + cubefb HOLES signal — awaiting silicon re-run.
   CPU-drawn full-screen pattern displays correctly (border, corner
   markers, color bands, 555 discriminator green).
 
+## Push workflow (non-negotiable — David has corrected agents on this repeatedly)
+
+The workspace machine has **no ViRGE card**; David tests on a separate box
+(`david-ta970`) by **pulling from GitHub**. Consequence: he cannot run
+anything until it is pushed.
+
+For every change:
+- Build locally first (`gcc` needs no card): `make -B BACKEND=virge <target>`
+  to confirm it compiles before he ever pulls.
+- `git commit` with the **expected hardware observation** in the message
+  (what David should see on `david-ta970`), then `git push origin main`
+  **immediately**.
+- **Never hold a commit "until hardware-verified" — that deadlocks him.**
+  Push first; he pulls, runs on `david-ta970`, and reports logs/photos back.
+
+Gotcha: `gltritest`/`tritest`/`filltest`/`fliptest`/`dztest` are NOT in
+`DEMOS`, so `make -B BACKEND=virge` does NOT rebuild them — build each
+target explicitly (a stale `gltritest` binary still reports the old Z base
+`0xea600` + the old vsync timeout).
+
 ## Ground rules (from PLAN.md, non-negotiable)
 
 - Register facts need citations from `docs/datasheets/` (DB019-B, by
