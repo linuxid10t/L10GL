@@ -7,7 +7,8 @@ facts) before changing code. Live state: symptom 1 (diagnosed — monitor
 scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
 double-buffering with vsync page-flip (LANDED 2026-07-07); back-face
 "bleedthrough" — RESOLVED on silicon 2026-07-08 (perspective cull +
-attribute-base prestep; cubefb 36-sweep clean). NEW symptom 2026-07-08:
+attribute-base prestep; cubefb 0 blends/misplaced AND monitor-confirmed
+by David — no bleed visible). NEW symptom 2026-07-08:
 black wedges out of face-corner vertices (coverage gaps — old cubefb was
 blind to background-inside-face). Cause: integer-dy edge slopes vs the
 fractional-Y prestep. Float-dy fix (195260c) closed the wedges but left
@@ -189,7 +190,7 @@ its matrix, but tritest already covers 3D+Z at the new layout; the earlier
 HEIGHT with Z ON … the cube cutoff is NOT Z" — matches the bleedthrough
 diagnosis below (a culling/setup issue, not a Z-buffer failure).
 
-## Back-face "bleedthrough": root cause identified 2026-07-08 — fix landed, awaiting silicon verdict
+## Back-face "bleedthrough": RESOLVED 2026-07-08 — VRAM-clean (cubefb 0 blends/misplaced) AND monitor-confirmed by David
 
 (History: the "monitor scaling, closed" call of 2026-07-07 was retracted the
 same day — scaling blends colors into a fringe, it does not bleed pure face
@@ -216,8 +217,15 @@ moved (TXS, TYS) to the prestepped scanline position, biasing each
 triangle's Z by up to one edge-walk step — many 16-bit LSBs on a steep
 near-edge-on face — which inflates near-tie noise.
 
-**Fix (this commit, UNVERIFIED on silicon — re-run `cubefb` for the
-verdict, expected 9 → 0):**
+**Fix (perspective cull `3d4e49c` + attribute-base prestep `25786e7` +
+`cubefb` z_cmd_bits pin to LESS) — VERIFIED on silicon 2026-07-08.** cubefb
+36-sweep reports 0 blends / 0 misplaced / 0 holes, AND David confirms on
+the live monitor (after the df35256 run) that no bleedthrough is visible
+— the display path is clean, closing the gap a static VRAM readback
+alone could not. The earlier "monitor scaling, closed" call was wrong
+(scaling fringes; it does not bleed pure face color through); the real
+fix was the cull + base prestep, and the monitor view is now the
+exonerating evidence.
 - Perspective-correct cull in cube/cubefb/cubediag:
   `dot(normal_view, center_view) >= 0` skips the face (exact for planar
   faces; unit-cube center == normal, so `center_view = normal_view +
@@ -343,8 +351,9 @@ true diagonal Z ~0.086 (no saturation). cubefb 36-sweep: **0 of 36
 orientations contaminated** (0 blends / 0 misplaced / 0 holes; was 9/36,
 310deg worst at 1196 holes). The 9/36 coverage-hole axis is **CLOSED**.
 Tri B (lr=1) untouched, stays correct. Any remaining visible artifact is
-NOT in VRAM (cubefb reads VRAM directly and is clean) — the back-face
-"bleedthrough" axis below is the open one.
+NOT in VRAM (cubefb reads VRAM directly and is clean). The back-face
+"bleedthrough" axis is ALSO resolved — David confirms no bleed is
+visible on the live monitor (see the section below).
 
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
