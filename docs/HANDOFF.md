@@ -277,6 +277,35 @@ inside the convex hull of the 8 projected vertices (exact silhouette for
 a convex solid). UNVERIFIED on silicon — re-run the sweep AND eyeball the
 spinning cube (expected: 0 holes, no wedges).
 
+**2026-07-08 follow-up #2 — notch ROOT-CAUSE-LOCALIZED to Z=LESS, not
+coverage (diagap on david-ta970).** The 9/36 coverage holes survive the
+float-dy fix, so `diagap` reproduced the cube's exact Left-face shared
+diagonal at 310deg in isolation and split it. Decisive result:
+  - A-alone (LESS): a_left drifts INLAND of trueX (correct rows 351-364,
+    then freezes at ~0.9 px/row, +40px inland by row 377).
+  - B-alone (LESS): b_right = floor(trueX) every row. Correct.
+  - both-LESS A-first == both-LESS B-first == 40px gap (NOT draw-order).
+  - **both-ALWAYS A-first: 0px gap; a_left = ceil(trueX) every row.**
+Same tri A, same geometry, only Z mode differs => **Z=LESS is rejecting
+tri A's OWN pixels on its diagonal side.** Nothing competes with A in
+the alone pass (fresh clear_z 1.0), so A's interpolated Z must be >= 1.0
+on those columns. Tri A is lr=0 (edge-02/long on the right, the diagonal
+edge-12 on the left); virge.c seeds TZS at (x_start,y_bot) on edge-02
+(`virge.c:1107-1130`) and walks it up/across via
+`ew_z = -dzdy + slope02*dzdx`. That Z walk diverges past 1.0 as it
+reaches the diagonal, WORSE toward the edge-12 seed vertex v1=P7 (row
+377) — exactly the observed growth direction. Consistent with all three
+edge-stepping refutations (Z=ALWAYS is watertight => the X edges are
+correct). The bug is in **Z setup** (seed and/or gradient), asymmetric
+across the two coplanar tris because their vertex orderings differ (A's
+diagonal = edge-12/top-half; B's = edge-01/bottom-half, fine).
+**Confirm probe (commit c738f52, awaiting run):** diagap's Z-readback
+pass dumps A's written Z across the scanline — prediction is gap columns
+read saturated ~1.0 while red columns show a normal gradient, which
+distinguishes seed-offset (uniform) vs gradient-sign/magnitude (tilts
+past 1.0 mid-span). Run `sudo ./diagap` (310deg) and a clean-angle
+control. Do NOT commit any TXEND12 edge perturbation — X edges are correct.
+
 ## Established engine facts (verified against 86Box, 2026-07-06)
 
 Register-file architecture, from the MMIO decode in 86Box
@@ -363,6 +392,15 @@ never copy):
   contaminated before `25786e7`, 9/36 after, 0/36 after the cull +
   base-prestep fix (but holes were not yet a signal); now the verdict
   tool for the float-dy slope fix. Build: `make -B BACKEND=virge cubefb`.
+- `sudo ./diagap [angle-index]` (default 31 = 310°, cubefb's worst) —
+  reproduces the cube's exact Left-face shared diagonal (vert0-vert7;
+  tri A {0,4,7}=red with the diagonal as edge-12, tri B {0,7,3}=green
+  with it as edge-01) in isolation, same rotation+projection as cubefb.
+  Five passes (A-alone/B-alone/both-LESS×2 orders/both-ALWAYS) print the
+  per-row gap between the green and red runs, then a 6th Z-readback pass
+  draws A alone under Z=ALWAYS+Z-update and dumps A's written Z across
+  the scanline. This pinned the notch to Z, not coverage (see below).
+  Build: `make -B BACKEND=virge diagap`.
 - `sudo ./fbtest` — fbdev-based pattern; useless on this machine (no
   /dev/fb0), kept for machines that have one.
 - Boot log prints: FB/fbdev status, "CRTC raw"/"CRTC truth" dump
