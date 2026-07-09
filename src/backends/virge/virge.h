@@ -624,6 +624,16 @@ struct virge_ctx {
                                rendered 0x3436, the engine's off-texture texel). */
     int      tex_bound;     /* Non-zero if a texture is currently bound */
 
+    /* Texture SOURCE stride: byte offset of vertically-adjacent texels = the
+     * texture's row pitch (tex_width * bytes_per_texel) for a flat texture.
+     * This goes in DEST_SRC_STR (0xB4E4) bits 11:0 -- the SOURCE STRIDE field
+     * (datasheet 3d_regs.txt:292-294: "byte offset of vertically adjacent
+     * pixels for a flat (not mipmapped) texture map", bits 2-0 must be 0).
+     * Was wrongly set to the SCREEN stride -- texprobe traced every texel
+     * resolving to TEX_BDR_CLR (border) to this (commit following v9).
+     * Cached in bind_texture, re-armed per primitive in program_3d_state. */
+    uint32_t tex_stride;
+
     /* DEBUG OVERRIDE for the texture-perspective U/V scale hunt (texprobe v7).
      * The driver normally encodes U/V with frac_bits = 27 - s_val (S(4+s).(27-s),
      * the datasheet format, correct for the NON-perspective path). But the

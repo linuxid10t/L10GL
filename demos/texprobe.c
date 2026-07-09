@@ -532,6 +532,48 @@ int main(int argc, char **argv)
         l10gl_bind_texture(&ctx, &tex);
     }
 
+    /* ---- TEST 10: SOURCE STRIDE FIX -- re-test with the texture row pitch.
+     * Found a clear datasheet violation: program_3d_state wrote DEST_SRC_STR
+     * bits 11:0 (SOURCE STRIDE) with the SCREEN stride (1600), but the
+     * datasheet (3d_regs.txt:292) says it is the TEXTURE row pitch
+     * (64*2=128). Now fixed to the bound texture's pitch. v7/v9 sweeps ran
+     * WITH that bug present, so re-sweep ufrac (persp + non-persp): if any
+     * combo now reads RED, the source stride was the blocker. */
+    {
+        struct l10gl_texture rtex;
+        uint16_t red[TEX * TEX];
+        for (int i = 0; i < TEX * TEX; i++) red[i] = 0xFC00;
+        l10gl_tex_image_2d(&ctx, &rtex, TEX, TEX, L10GL_TEX_FMT_ARGB1555, red);
+        l10gl_bind_texture(&ctx, &rtex);
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+
+        int mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        int ufracs[] = { 15, 17, 19, 21 };
+        float uv05[4][2] = { {0.5f,0.5f},{0.5f,0.5f},{0.5f,0.5f},{0.5f,0.5f} };
+
+        printf("\nTEST 10: SOURCE STRIDE fix (texture pitch); re-sweep ufrac\n");
+        printf("  R=31 -> RED texel read (works!); B=31/R=0 -> BLUE border\n");
+        for (int persp = 0; persp <= 1; persp++) {
+            hw->tex_dbg_nopersp = !persp;
+            printf("  %s:\n", persp ? "perspective (0101)" : "non-persp   (0001)");
+            for (size_t k = 0; k < sizeof(ufracs)/sizeof(ufracs[0]); k++) {
+                hw->tex_dbg_ufrac = ufracs[k];
+                l10gl_clear(&ctx);
+                virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x0000001F);
+                draw_quad(&ctx, x0, y0, x1, y1, zv, uv05);
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+                int r = (px >> 10) & 0x1F, b = px & 0x1F;
+                printf("    ufrac=%2d  center=0x%04x R=%-2d B=%-2d  %s\n",
+                       ufracs[k], px, r, b,
+                       (r == 31) ? "<-- RED TEXEL READ (works!)" : "blue border");
+            }
+        }
+        hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_ufrac = -1;
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+        l10gl_bind_texture(&ctx, &tex);
+    }
+
     printf("\nDone. Ctrl-C to exit.\n");
     while (running) { if (getchar() == EOF) break; }
     l10gl_destroy(&ctx);

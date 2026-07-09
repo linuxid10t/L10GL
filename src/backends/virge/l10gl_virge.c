@@ -468,6 +468,11 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
     hw->tex_base = tex_addr & ~0x7;
     virge_write32(hw, VIRGE_3D_TEX_BASE, hw->tex_base);
 
+    /* Cache the texture SOURCE stride (row pitch = width * bytes/texel) so
+     * program_3d_state can program DEST_SRC_STR bits 11:0 with the TEXTURE
+     * pitch, not the screen stride (datasheet 3d_regs.txt:292-294). */
+    hw->tex_stride = tex->width * tex->bytes_per_texel;
+
     /* Cache CMD_SET bits for this texture's format.
      *
      * We build the texture-related CMD_SET bits:

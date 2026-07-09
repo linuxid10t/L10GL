@@ -767,9 +767,14 @@ static void program_3d_state(struct virge_ctx *ctx)
     z_base &= ~0x7;  /* force quadword alignment */
     virge_write32(ctx, VIRGE_3D_Z_BASE, z_base);
 
-    /* DEST_SRC_STR: destination stride [27:16], source stride [11:0] */
+    /* DEST_SRC_STR: destination stride [27:16] = framebuffer pitch; source
+     * stride [11:0] = the bound TEXTURE's row pitch (tex_stride). The source
+     * field is "byte offset of vertically adjacent pixels for a flat texture
+     * map" (datasheet 3d_regs.txt:292-294) -- it is the texture pitch, NOT the
+     * screen stride. Writing the screen stride here made every texel resolve
+     * to TEX_BDR_CLR (texprobe v6-v9). */
     virge_write32(ctx, VIRGE_3D_DEST_SRC_STR,
-                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+                  ((dest_stride & 0xFFF) << 16) | (ctx->tex_stride & 0xFFF));
 
     /* Z_STRIDE */
     virge_write32(ctx, VIRGE_3D_Z_STRIDE, z_stride & 0xFFF);
