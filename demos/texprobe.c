@@ -67,6 +67,22 @@
  *      saturates on silicon). (3) textured_cube drops to NEAREST (LINEAR is
  *      unverified on silicon). Expected after this build: TEST 15 non-persp u21
  *      still the perfect grid; textured_cube renders its textures.
+ *   v16 RESULT (silicon 2026-07-09, David): TEST 15 non-persp u21 = EXACT grid
+ *      (scaling fix correct, no regression); textured_cube RENDERS its textures
+ *      with the expected affine swim. AFFINE/NEAREST CUBE = DONE. persp u21 still
+ *      saturates (unchanged) -- the open "after" axis.
+ *   TEST 16 - PERSPECTIVE W-divide discriminator. The persp command saturates
+ *      U/W even at constant W=1.0 (where U/1 must equal non-persp), and the
+ *      driver's persp register footprint is IDENTICAL to non-persp (only the
+ *      command bits differ) -- so the 0101 command reads U/V/W with a different
+ *      semantic. Datasheet: persp U/V = S(4+s).(27-s)=S10.21 (we program it),
+ *      TWS = S12.19 S=0 (we program it), but SILENT on the divide algorithm.
+ *      This test measures it: constant mid texel per tile (dU=dV=dW=0 -> START
+ *      regs only), V held at texel 16 (nonzero; v16 showed U's result depends on
+ *      V), sweep programmed W over a wide power-of-2 range, read R(U-channel).
+ *        R falls as W rises past 1  -> DIVIDE U by W (W under-read -> hunt format)
+ *        R falls as W falls below 1 -> MULTIPLY U by W
+ *        R invariant in W           -> TWS is NOT the divisor (W from Z? pre-mult?)
  *
  * Drives the real frontend API and reaches struct virge_ctx via
  * ctx.backend_data (hw is the first field of virge_private) for readback.
@@ -111,6 +127,22 @@ static void draw_quad(struct l10gl_ctx *ctx, int x0, int y0, int x1, int y1,
                       float zv, const float uv[4][2])
 {
     float w = 1.0f;
+    struct l10gl_vertex TL = { (float)x0,(float)y0, zv,w, 1,1,1,1, uv[0][0],uv[0][1] };
+    struct l10gl_vertex TR = { (float)x1,(float)y0, zv,w, 1,1,1,1, uv[1][0],uv[1][1] };
+    struct l10gl_vertex BR = { (float)x1,(float)y1, zv,w, 1,1,1,1, uv[2][0],uv[2][1] };
+    struct l10gl_vertex BL = { (float)x0,(float)y1, zv,w, 1,1,1,1, uv[3][0],uv[3][1] };
+    l10gl_draw_textured_triangle(ctx, TL, TR, BR);
+    l10gl_draw_textured_triangle(ctx, TL, BR, BL);
+    l10gl_wait_engine(ctx);
+}
+
+/* Like draw_quad but with a caller-supplied W (perspective weight). TEST 16
+ * sweeps W to learn how the perspective engine combines U and W -- draw_quad's
+ * hardcoded w=1.0 can't express that. Constant UV + constant W across the quad
+ * means dU=dV=dW=0, so only the START registers (TUS/TVS/TWS) matter. */
+static void draw_quad_w(struct l10gl_ctx *ctx, int x0, int y0, int x1, int y1,
+                        float zv, float w, const float uv[4][2])
+{
     struct l10gl_vertex TL = { (float)x0,(float)y0, zv,w, 1,1,1,1, uv[0][0],uv[0][1] };
     struct l10gl_vertex TR = { (float)x1,(float)y0, zv,w, 1,1,1,1, uv[1][0],uv[1][1] };
     struct l10gl_vertex BR = { (float)x1,(float)y1, zv,w, 1,1,1,1, uv[2][0],uv[2][1] };
@@ -899,6 +931,88 @@ int main(int argc, char **argv)
                      "TEST 15 [%s] gradient (UV 0,0 -> TEX,TEX)", paths[p].nm);
             rg_grid(title, base, stride, x0, y0, x1, y1);
         }
+
+        hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_ufrac = -1;
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+        l10gl_bind_texture(&ctx, &tex);
+    }
+
+    /* ---- TEST 16: PERSPECTIVE W-divide discriminator (the "after" axis).
+     * v15/v16 proved non-persp ufrac=21 renders the gradient exactly but the
+     * PERSPECTIVE command (0101) saturates U/W to texel(63,63) for every non-
+     * zero UV -- even at constant W=1.0, where U/1 MUST equal non-persp. Driver
+     * audit: the persp register footprint is IDENTICAL to non-persp (only the
+     * command bits differ, virge.c:1672), so the 0101 command reads U/V/W with a
+     * different semantic. Datasheet: persp U/V = S(4+s).(27-s)=S10.21 (which we
+     * program) and TWS = S12.19 S=0 (which we program), but it is SILENT on the
+     * divide algorithm. This test measures it directly: each tile is a CONSTANT
+     * mid texel (dU=dV=dW=0 -> only START registers TUS/TVS/TWS matter), V held
+     * at texel 16 (nonzero -- v16 showed U's result depends on V, so V=0 would
+     * force U=0 and hide the sweep), programmed W swept over a wide power-of-2
+     * range. Read R (U-channel) and G (V-channel) per tile:
+     *   R falls as W rises past 1  -> DIVIDE U by W (W under-read -> hunt format)
+     *   R falls as W falls below 1 -> MULTIPLY U by W
+     *   R invariant in W           -> TWS is NOT the divisor (W from Z? pre-mult?)
+     * Non-persp reference (what U/1 should give): U texel 16 -> R8, U 32 -> R16. */
+    {
+        struct l10gl_texture g4;
+        uint16_t g4mem[TEX * TEX];
+        gen_uv_gradient(g4mem, TEX);
+        l10gl_tex_image_2d(&ctx, &g4, TEX, TEX, L10GL_TEX_FMT_ARGB1555, g4mem);
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
+        l10gl_bind_texture(&ctx, &g4);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);  /* white = border */
+        hw->tex_dbg_nopersp = 0;   /* PERSPECTIVE (0101) -- the broken path */
+        hw->tex_dbg_ufrac = 21;    /* datasheet persp format S10.21 */
+
+        int   us[] = { 4, 8, 16, 32 };                          /* U texel (rows) */
+        float ws[] = { 1.0f/16, 1.0f/8, 1.0f/4, 1.0f/2,         /* programmed W (cols) */
+                       1.0f, 2.0f, 4.0f, 8.0f };
+        #define N16U ((int)(sizeof(us)/sizeof(us[0])))
+        #define N16W ((int)(sizeof(ws)/sizeof(ws[0])))
+        const int tile_w = 80, tile_h = 80, gap_x = 5, gap_y = 10;
+        const int ox = 80, oy = 100;
+        float vn = 16.0f / TEX;   /* V held at texel 16 (normalized) */
+
+        printf("\nTEST 16: PERSPECTIVE W-divide discriminator (persp u21, WRAP, V=texel16)\n");
+        printf("  constant UV per tile (dU=dV=dW=0 -> START regs only); U/W sweep.\n");
+        printf("  cell = R(U-chan):G(V-chan); non-persp ref U16->R8G8, U32->R16G8; 31=sat, white=border\n");
+
+        l10gl_clear(&ctx);
+        for (int r = 0; r < N16U; r++)
+            for (int c = 0; c < N16W; c++) {
+                int tx0 = ox + c * (tile_w + gap_x);
+                int ty0 = oy + r * (tile_h + gap_y);
+                float un = (float)us[r] / TEX;
+                float uv[4][2] = { {un,vn},{un,vn},{un,vn},{un,vn} };
+                draw_quad_w(&ctx, tx0, ty0, tx0 + tile_w, ty0 + tile_h, zv, ws[c], uv);
+            }
+
+        /* header: programmed W per column */
+        printf("  U\\W  ");
+        for (int c = 0; c < N16W; c++) printf(" %6.4g", ws[c]);
+        printf("\n");
+        for (int r = 0; r < N16U; r++) {
+            printf("  U%-2d ", us[r]);
+            for (int c = 0; c < N16W; c++) {
+                int mx = ox + c * (tile_w + gap_x) + tile_w / 2;
+                int my = oy + r * (tile_h + gap_y) + tile_h / 2;
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+                int rr = (px >> 10) & 0x1F, gg = (px >> 5) & 0x1F;
+                if (px == 0x7FFF) printf(" %6s", "BORD");
+                else              printf("   %2d:%-2d", rr, gg);
+            }
+            printf("\n");
+        }
+        printf("  decode: R(U) falling as W rises past 1 = DIVIDE U/W; "
+               "R falling as W drops below 1 = MULTIPLY; R flat = TWS ignored.\n");
+        printf("  regs: TWS=0x%08x TUS=0x%08x TVS=0x%08x CMD=0x%08x (last tile drawn: U%d W%.4g)\n",
+               virge_read32(hw, 0xB514), virge_read32(hw, 0xB538), virge_read32(hw, 0xB534),
+               virge_read32(hw, 0xB500), us[N16U-1], ws[N16W-1]);
+        #undef N16U
+        #undef N16W
 
         hw->tex_dbg_nopersp = 0;
         hw->tex_dbg_ufrac = -1;
