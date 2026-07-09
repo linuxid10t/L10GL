@@ -92,7 +92,11 @@
  *   TEST 17 - confirm the fix: sweep persp ufrac {9..15} at W=1 over the
  *      gradient (the value giving R 0..31 = the fix; predicted 12), then at
  *      ufrac=12 sweep W {0.5,1,2,4} at texel(16,16) -- a working divide tracks
- *      U/W (R halves per W x2) with no saturation at W=1.
+ *      U/W (R halves per W x2) with no saturation at W=1. RESULT (silicon
+ *      2026-07-09): ufrac=12 EXACT; persp fixed; cube perspective-correct (d982e42).
+ *   TEST 18 - LINEAR (bilinear) verify: 1-texel R-stripe sampled at a texel
+ *      boundary (2.5) must blend (~R15) under LINEAR vs hard 0/31 under NEAREST;
+ *      both X (blend U) and Y (blend V). Non-persp isolates the filter.
  *
  * Drives the real frontend API and reaches struct virge_ctx via
  * ctx.backend_data (hw is the first field of virge_private) for readback.
@@ -1098,6 +1102,71 @@ int main(int argc, char **argv)
         hw->tex_dbg_nopersp = 0;
         hw->tex_dbg_nopremult = 0;
         hw->tex_dbg_ufrac = -1;
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+        l10gl_bind_texture(&ctx, &tex);
+    }
+
+    /* ---- TEST 18: LINEAR (bilinear) filter verify. textured_cube uses NEAREST
+     * (silicon-proven); LINEAR (CMD filter bits 110 = 4TPP, wired in the driver
+     * but NOT yet silicon-verified) would give smoother textures. Confirm the
+     * engine blends across texels: a 1-texel R-stripe texture (R alternates
+     * 31/0 every texel) sampled at a texel BOUNDARY (texel 2.5) must read ~R15
+     * (a blend) under LINEAR vs a hard 0/31 under NEAREST; at a texel CENTER
+     * (2.0) both read the texel's own color (R0). Done for both X-stripes (blend
+     * in U) and Y-stripes (blend in V). Non-persp isolates the FILTER (the
+     * filter stage is orthogonal to the persp divide). If LINEAR blends in both
+     * axes, the cube can switch NEAREST->LINEAR. */
+    {
+        struct l10gl_texture sx, sy;
+        uint16_t sxm[TEX * TEX], sym[TEX * TEX];
+        for (int y = 0; y < TEX; y++) for (int x = 0; x < TEX; x++) {
+            sxm[y * TEX + x] = (uint16_t)(0x8000 | ((x & 1) ? (31 << 10) : 0) | 1);
+            sym[y * TEX + x] = (uint16_t)(0x8000 | ((y & 1) ? (31 << 10) : 0) | 1);
+        }
+        l10gl_tex_image_2d(&ctx, &sx, TEX, TEX, L10GL_TEX_FMT_ARGB1555, sxm);
+        l10gl_tex_image_2d(&ctx, &sy, TEX, TEX, L10GL_TEX_FMT_ARGB1555, sym);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);
+        hw->tex_dbg_nopersp = 1;   /* non-persp: isolate the filter */
+        hw->tex_dbg_ufrac = 21;
+        hw->tex_dbg_nopremult = 0;
+
+        int mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        struct { const char *nm; float uv; } pos[] = {
+            { "center  2.0", 2.0f / TEX },   /* texel 2 exactly (R0)  */
+            { "boundary 2.5", 2.5f / TEX },  /* between R0 and R31    */
+        };
+        enum l10gl_tex_filter filts[] = { L10GL_FILTER_NEAREST, L10GL_FILTER_LINEAR };
+        const char *fnm[] = { "NEAREST(100/1TPP)", "LINEAR (110/4TPP)" };
+
+        printf("\nTEST 18: LINEAR (bilinear) verify -- 1-texel R-stripe, center vs boundary\n");
+        printf("  expect: center R0; boundary NEAREST->0 or 31, LINEAR->~15 (blend)\n");
+        for (int fi = 0; fi < 2; fi++) {
+            l10gl_tex_parameter(&ctx, filts[fi], L10GL_WRAP_REPEAT);
+            printf("  %s:\n", fnm[fi]);
+            l10gl_bind_texture(&ctx, &sx);          /* X-stripe: vary U, V fixed at texel 2 */
+            for (int i = 0; i < 2; i++) {
+                float uv[4][2] = { {pos[i].uv,2.0f/TEX},{pos[i].uv,2.0f/TEX},
+                                   {pos[i].uv,2.0f/TEX},{pos[i].uv,2.0f/TEX} };
+                l10gl_clear(&ctx);
+                draw_quad(&ctx, x0, y0, x1, y1, zv, uv);
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+                printf("    X-stripe %-14s R=%-2d\n", pos[i].nm, (px >> 10) & 0x1F);
+            }
+            l10gl_bind_texture(&ctx, &sy);          /* Y-stripe: vary V, U fixed at texel 2 */
+            for (int i = 0; i < 2; i++) {
+                float uv[4][2] = { {2.0f/TEX,pos[i].uv},{2.0f/TEX,pos[i].uv},
+                                   {2.0f/TEX,pos[i].uv},{2.0f/TEX,pos[i].uv} };
+                l10gl_clear(&ctx);
+                draw_quad(&ctx, x0, y0, x1, y1, zv, uv);
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+                printf("    Y-stripe %-14s R=%-2d\n", pos[i].nm, (px >> 10) & 0x1F);
+            }
+        }
+
+        hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_ufrac = -1;
+        hw->tex_dbg_nopremult = 0;
         l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
         virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
         l10gl_bind_texture(&ctx, &tex);
