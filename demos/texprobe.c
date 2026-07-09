@@ -32,10 +32,16 @@
  *   v12 RESULT (silicon): WRAP reads all texel(0,0) (R0 G0 everywhere) -- the
  *      U/V coordinate does NOT select the texel; the fetch address is stuck at
  *      TEX_BASE+0. Fetch works, addressing does not.
- *   TEST 13 - gradient under WRAP with CONSTANT UV (du=dv=0): does the START
- *      register pick the texel (-> deltas dead, iteration is the bug) or is it
- *      stuck at texel(0,0) too (-> whole U/V->address path dead)? Raw pixel
- *      readback so texel(0,0)=0x8001 != border 0x0000.
+ *   v13 RESULT (silicon): ALL UV read 0x0000 = BORDER, incl. UV=(0,0) (NOT
+ *      texel(0,0)=0x8001). v12's "stuck at texel(0,0)" was WRONG -- border was
+ *      set to 0, so 0x0000 (border) was indistinguishable from 0x8001 (texel 0)
+ *      by R/G alone. Registers ARE correct (TUS=63<<19, deltas=0, TEX_BASE ok).
+ *      PARADOX: TEST 11's SOLID RED fetched under WRAP (0x7c00) but the gradient
+ *      borders -- fetch-vs-border is TEXTURE-SPECIFIC, not coord-specific.
+ *   TEST 14 - white border (0x7FFF) under WRAP so border is unmistakable; sweep
+ *      UV over the ORIGINAL gradient, a FRESH re-uploaded gradient (new addr),
+ *      and a RED control; plus VRAM readback of each. White=BORDER, 0x0000=
+ *      clobbered VRAM, texel-color=fetch. Resolves clobber-vs-address-vs-data.
  *
  * Drives the real frontend API and reaches struct virge_ctx via
  * ctx.backend_data (hw is the first field of virge_private) for readback.
@@ -753,6 +759,75 @@ int main(int argc, char **argv)
                virge_read32(hw, 0xB520), virge_read32(hw, 0xB51C),
                virge_read32(hw, 0xB52C), virge_read32(hw, 0xB528),
                virge_read32(hw, 0xB4EC), virge_read32(hw, 0xB500));
+
+        hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_ufrac = -1;
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+        l10gl_bind_texture(&ctx, &tex);
+    }
+
+    /* ---- TEST 14: white border under WRAP -- BORDER vs fetch-of-zero, with
+     * controls. v13 read 0x0000 for the gradient under WRAP, but with
+     * TEX_BDR_CLR=0 that 0x0000 is BOTH border AND a zeroed texel -- ambiguous
+     * (the same trap as TEST 6a). Yet TEST 11's SOLID RED fetched under WRAP
+     * (0x7c00). So fetch-vs-border is TEXTURE-SPECIFIC. Three suspects:
+     * (a) the gradient's long-lived VRAM @0x2bf200 got clobbered to 0 by some
+     *     earlier op (red is uploaded fresh each test, so it survives);
+     * (b) the address 0x2bf200 itself is bad (a fresh gradient elsewhere works);
+     * (c) the gradient DATA triggers border (unlikely -- border is coord-based).
+     * Set border=WHITE (0x7FFF, bit15=0 -- distinct from any gradient texel
+     * which has bit15=1) so border is unmistakable, re-read each texture's VRAM,
+     * and sweep over: the ORIGINAL gradient, a FRESH re-uploaded gradient (new
+     * address), and a RED control.
+     *   center=0x7FFF -> BORDER ; 0x0000 -> clobbered VRAM ; texel-color -> FETCH.
+     * If GRAD fresh fetches but GRAD orig borders -> (a) clobber. If GRAD orig
+     * borders and fresh also borders but RED fetches -> (b)/(c) gradient-specific.
+     * If all fetch -> v13's 0x0000 was stale state. */
+    {
+        uint32_t gaddr = (uint32_t)(uintptr_t)tex.backend_data;
+        uint16_t *gv = (uint16_t *)(hw->fb + gaddr);
+        printf("\nTEST 14: white border (0x7FFF) under WRAP -- border vs fetch; +VRAM readback + red control\n");
+        printf("  GRAD orig @0x%x VRAM: (0,0)=0x%04x (32,32)=0x%04x (63,63)=0x%04x (expect 0x8001/0xc201/0xffe1)\n",
+               gaddr, gv[0], gv[TEX * 32 + 32], gv[TEX * 63 + 63]);
+
+        struct l10gl_texture g2, r14;
+        uint16_t g2mem[TEX * TEX], redmem[TEX * TEX];
+        gen_uv_gradient(g2mem, TEX);
+        for (int i = 0; i < TEX * TEX; i++) redmem[i] = 0xFC00;
+        l10gl_tex_image_2d(&ctx, &g2,  TEX, TEX, L10GL_TEX_FMT_ARGB1555, g2mem);
+        l10gl_tex_image_2d(&ctx, &r14, TEX, TEX, L10GL_TEX_FMT_ARGB1555, redmem);
+        uint32_t g2addr = (uint32_t)(uintptr_t)g2.backend_data;
+        uint32_t raddr  = (uint32_t)(uintptr_t)r14.backend_data;
+        printf("  GRAD fresh @0x%x VRAM (32,32)=0x%04x ; RED @0x%x VRAM [0]=0x%04x\n",
+               g2addr, ((uint16_t *)(hw->fb + g2addr))[TEX * 32 + 32],
+               raddr,  ((uint16_t *)(hw->fb + raddr))[0]);
+
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
+        hw->tex_dbg_nopersp = 1;
+        hw->tex_dbg_ufrac = 19;
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);  /* WHITE border */
+
+        int mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        struct { const char *nm; struct l10gl_texture *t; } tns[] = {
+            { "GRAD orig ", &tex }, { "GRAD fresh", &g2 }, { "RED       ", &r14 } };
+        int uvs[] = { 0, 32, 63 };
+        for (int t = 0; t < 3; t++) {
+            l10gl_bind_texture(&ctx, tns[t].t);   /* rebind: tex_cmd_bits per tex */
+            for (int ui = 0; ui < 3; ui++) {
+                float uu = (float)uvs[ui];
+                float uv[4][2] = { {uu,uu},{uu,uu},{uu,uu},{uu,uu} };
+                l10gl_clear(&ctx);
+                draw_quad(&ctx, x0, y0, x1, y1, zv, uv);
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+                const char *v =
+                    (px == 0x7FFF) ? "<-- BORDER (white)" :
+                    (px == 0x0000) ? "<-- zero (clobbered?)" : "(texel fetched)";
+                printf("  %s UV=(%2d,%2d) center=0x%04x R=%-2d G=%-2d B=%-2d %s\n",
+                       tns[t].nm, uvs[ui], uvs[ui], px,
+                       (px >> 10) & 0x1F, (px >> 5) & 0x1F, px & 0x1F, v);
+            }
+        }
 
         hw->tex_dbg_nopersp = 0;
         hw->tex_dbg_ufrac = -1;
