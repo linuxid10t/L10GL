@@ -15,10 +15,14 @@ fractional-Y prestep. Float-dy fix (195260c) closed the wedges but left
 9/36 orientations with a coverage NOTCH at shared face diagonals — root
 caused + fixed (lr=0 X-attribute-delta sign error, df35256) and VERIFIED
 on silicon 2026-07-08: cubefb 36-sweep = 0 holes (see follow-up #4).
-CURRENT OPEN AXIS: textured_cube — texture UV does not interpolate across
-a triangle (texprobe shows U,V dead-constant); all register addresses/
-format/s/command verified datasheet-correct, so the bug is in the deltas
-or the perspective W-divide. See follow-up #5 + run `sudo ./texprobe`.
+CURRENT OPEN AXIS: textured_cube — texture mapping FIXED for the non-persp
+path (v15/v16, 2026-07-09): texprobe proved non-persp+ufrac=21+WRAP renders
+the gradient exactly, so the engine works. Two real bugs found+fixed: (1)
+driver wasn't scaling normalized [0,1] UV by texture side (contract bug);
+(2) the PERSPECTIVE command saturates on real DX (U/W blows up even at
+W=1.0) — so the cube now defaults to non-perspective (affine). The cube
+should now render its textures (NEAREST; LINEAR unverified). REMAINING
+"after" axis: debug the broken perspective path + verify LINEAR. See #5.
 
 ## Test setup (fixed, do not re-derive)
 
@@ -566,13 +570,48 @@ correct — the real cube bug may be just CLAMP→border (needs WRAP). [UV=(0,0)
 read 0x0000 for both gradients — secondary; border was white so not border;
 TEST 15 grid will show if ufrac=21 fixes it.]
 
-**v15 (095173e) PENDING RUN: confirm the fix.** Fresh gradient, WRAP, sweep
-{persp ufrac=21 (cube path), non-persp ufrac=21, non-persp ufrac=19 (contrast)},
-varying UV 0..TEX, read R/G grid.
-  RUN: `git pull && make -B BACKEND=virge texprobe && sudo ./texprobe`.
-  Paste TEST 15. R rising 0..31 matching expected = TEXTURING CONFIRMED →
-  fix = cube uses WRAP (persp ufrac already 21); then drop the debug overrides.
-  R/4 under non-persp ufrac=19 = confirms the ufrac diagnosis.
+**v15 RESULT (095173e, silicon 2026-07-09) — TEXTURING CONFIRMED on the
+NON-persp path; PERSPECTIVE is BROKEN.** Fresh gradient, WRAP, sweep
+{persp u21, non-persp u21, non-persp u19}, varying UV 0..TEX:
+  - non-persp **ufrac=21**: PERFECT — R rises 0,4,8,…,28 and G rises
+    5,10,16,21,26 EXACTLY matching expected (only the UV=TEX=64 edge reads
+    0 = correct WRAP). **The texture engine works.**
+  - non-persp **ufrac=19**: R = expected/4 → confirms ufrac=21, texel int =
+    bits 30:21.
+  - **persp ufrac=21: SATURATES** — R=G=31 for every non-zero UV (texel(63,63)),
+    0 only at UV=0. Even at the probe's W=1.0 (a divide-by-1 that should be a
+    no-op == non-persp) it saturates → a FORMAT/SEMANTIC bug specific to the
+    perspective command (0101), NOT merely the divide.
+
+**This re-roots the cube bug.** textured_cube uses perspective (W=1/Z_eye,
+textured_cube.c:65) and ALREADY sets WRAP_REPEAT (line 267) — so "CLAMP→border"
+was NEVER the cube's bug. The cube's symptom IS the broken perspective path.
+(The entire v6–v14 "every texel is border" saga was the texprobe dead-texture
+artifact — TEST 5/6 clobbering VRAM — not a driver bug; CLOSED.)
+
+Datasheet formats all match what we program (3d_regs.txt:1586 TWS=S12.19;
+1671-1987 TUS/TVS/TdUdX/TdVdX persp = S(4+s).(27-s)=S10.21; sign bit 0) yet
+persp saturates. Datasheet is SILENT on the divide algorithm; no trusted driver
+reference (kernel s3virge/DDX are 2D, Mesa s3v EXCLUDED per the source-trust
+hierarchy). Only behavioral hint is 86Box (weak).
+
+**v16 FIX LANDED (2026-07-09) — "non-persp now, persp after" (David's call):**
+  1. `8813cc8` virge scales normalized [0,1] UV by texture side 2^s (the l10gl.h
+     contract was violated — UV=1.0 picked texel 1, not 63; texprobe v1/v2 had
+     assumed this scaling).
+  2. `cc30cde` virge DEFAULTS to non-perspective (tex_dbg_nopersp=1) — persp
+     saturates on real DX. The persp-debug axis toggles it to 0.
+  3. `f8c974e` textured_cube drops LINEAR→NEAREST (LINEAR is NOT silicon-verified).
+  RUN: `git pull && make -B BACKEND=virge texprobe && sudo ./texprobe` (TEST 15
+  non-persp u21 should STILL be the perfect grid — confirms the scaling fix),
+  then `make BACKEND=virge textured_cube && sudo ./textured_cube` — the cube
+  should render its 6 textures (affine; mild swim during rotation = cosmetic).
+
+**PERSPECTIVE DEBUG (separate open axis, "after"):** why does U/W saturate even
+at W=1.0? Leads to probe: (a) persp may want ufrac≠21 (silicon already
+contradicted the datasheet for non-persp, which wants ufrac=21 not 19); (b) persp
+may need U,V pre-multiplied by W=1/Z (homogeneous). Also verify LINEAR (bilinear)
+so the cube can drop back to it. tex_dbg_ufrac / tex_dbg_nopersp stay for these.
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same
