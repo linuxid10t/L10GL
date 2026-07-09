@@ -25,7 +25,10 @@ W=1.0) — so the cube defaults to non-perspective (affine). REMAINING "after"
 axis: debug the broken perspective path (would eliminate the swim) + verify
 LINEAR. Driver audit 2026-07-09: the persp register footprint is IDENTICAL to
 non-persp (same code; only the command bits differ, 0101 vs 0001), so the bug
-is engine/format-side, not an obvious driver mistake. See #5.
+is engine/format-side, not an obvious driver mistake. **PERSP DIVIDE DECODED
+v17 (silicon 2026-07-09): the engine computes texel = 128·TUS/TWS (mod 64, sat
+≥2048) — a 2^7 scale factor vs U/W; fix = persp ufrac 12 (not 21). TEST 17
+confirms the ufrac=12 fix this build.** See #5.
 
 ## Test setup (fixed, do not re-derive)
 
@@ -617,20 +620,30 @@ saturates (unchanged — the "after" axis). textured_cube RENDERS its 6 textures
 with the expected affine swim (David: "definitely texture swim, but it looks as
 described"). The affine/NEAREST cube is DONE.
 
-**PERSPECTIVE DEBUG (separate open axis, "after"):** why does U/W saturate even
-at W=1.0? Driver audit 2026-07-09: TUS/TVS/TWS + every delta are computed by the
-SAME code for both paths — persp vs non-persp differ ONLY in the command bits
-(0101 vs 0001, virge.c:1672). At the probe's W=1.0 (TWS=1<<19, TdWdX=TdWdY=0) the
-divide is by 1 and MUST equal non-persp, yet it saturates → the `0101` command
-interprets the registers with a different format/semantic. Fresh clue in the v16
-persp grid: the U-channel texel saturates only when BOTH U≠0 and V≠0, while the
-V-channel saturates whenever V≠0 (independent of U) — i.e. U's result depends on
-V, suggesting the divisor W is coupled to V somehow. Decisive first probe: sweep
-TWS at fixed UV (W=0.5,1,2,4,…) and read the sampled texel — if it moves, the
-engine divides by TWS (then hunt the format); if invariant, TWS isn't the divisor
-(hunt elsewhere — maybe W from Z, or U,V must be pre-multiplied by W). Re-verify
-the datasheet perspective/divide text FIRST (top of [[source-trust-hierarchy]]).
-tex_dbg_ufrac / tex_dbg_nopersp stay for these.
+**PERSPECTIVE DEBUG ("after" axis) — DIVIDE DECODED v17 (silicon 2026-07-09,
+David): TEST 16 (b772e8a+1df1387) swept programmed W (1/16..128) × U texel at
+constant V=16. ALL 32 cells (R and G) match the model `texel = 128 · TUS / TWS`
+(then mod 64 for WRAP, saturating to 63 when the value ≥ 2048). E.g. U4/W64 →
+128·(4<<21)/(64<<19)=32→R16 (obs 16); U4/W128 → 16→R8 (obs 8); U16/W4 →
+2048→sat→R31 (obs 31); U8/W4 → 1024 mod 64 = 0→R0 (obs 0).** So the persp engine
+IS a divide (R falls as W rises — not a multiply, not W-ignored); it just has a
+clean **2^7 = 128× scale factor** vs the expected U/W, so at W=1 it yields
+512·U (saturated). The TEST 15 "U depends on V" was just saturation overflow —
+at fixed V there is NO coupling (G tracks V/W symmetrically). Regs read back
+correct (TUS=U<<21, TVS=V<<21, TWS=W<<19, CMD bits 30:27=0101 persp, bit26 WRAP)
+so this is engine-format-side, not a driver programming error.
+
+**FIX HYPOTHESIS:** to make W=1 a no-op (texel=U), U/V must lose 9 frac bits →
+**perspective ufrac = 21 − 9 = 12** (datasheet persp S10.21 is wrong for real DX,
+exactly as its non-persp S12.8.11/ufrac-11 was wrong — silicon wants 21 there).
+Equivalent: W could gain 9 bits (frac 28); ufrac is the knob kept. CONFIRM probe
+TEST 17 (this build): sweep persp ufrac {9..15} at W=1 → the value rendering the
+gradient 0..31 is the fix (predicted 12); then at ufrac=12 sweep W {0.5,1,2,4}
+→ must track U/W (R halves per W-doubling), no saturation at W=1. ON CONFIRM:
+driver fix = persp path uses ufrac 12, and (for the cube) supply TUS=U·W /
+TVS=V·W so the engine's (U·W)/W = U is perspective-correct; flip tex_dbg_nopersp
+default to 0 (re-enable persp); cube can then drop affine. tex_dbg_ufrac stays
+to override during the fix. See [[source-trust-hierarchy]] (datasheet > driver).
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same

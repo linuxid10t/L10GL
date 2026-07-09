@@ -83,6 +83,16 @@
  *        R falls as W rises past 1  -> DIVIDE U by W (W under-read -> hunt format)
  *        R falls as W falls below 1 -> MULTIPLY U by W
  *        R invariant in W           -> TWS is NOT the divisor (W from Z? pre-mult?)
+ *   v17 RESULT (silicon 2026-07-09, David): TEST 16 DECODED the persp divide --
+ *      ALL 32 cells match texel = 128 * TUS / TWS (mod 64 for WRAP, saturating
+ *      >= 2048). It IS a divide (R falls as W rises), not a multiply; the
+ *      "U depends on V" in TEST 15 was just saturation overflow (fixed-V shows
+ *      no coupling). A clean 2^7 scale factor vs expected U/W -> at W=1 it
+ *      yields 512*U (saturated). FIX: persp ufrac = 21 - 9 = 12.
+ *   TEST 17 - confirm the fix: sweep persp ufrac {9..15} at W=1 over the
+ *      gradient (the value giving R 0..31 = the fix; predicted 12), then at
+ *      ufrac=12 sweep W {0.5,1,2,4} at texel(16,16) -- a working divide tracks
+ *      U/W (R halves per W x2) with no saturation at W=1.
  *
  * Drives the real frontend API and reaches struct virge_ctx via
  * ctx.backend_data (hw is the first field of virge_private) for readback.
@@ -1018,6 +1028,69 @@ int main(int argc, char **argv)
                virge_read32(hw, 0xB500), us[N16U-1], ws[N16W-1]);
         #undef N16U
         #undef N16W
+
+        hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_ufrac = -1;
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+        l10gl_bind_texture(&ctx, &tex);
+    }
+
+    /* ---- TEST 17: confirm the perspective-divide FIX (persp ufrac). TEST 16
+     * decoded the persp divide as texel = 128 * TUS / TWS (mod 64, saturating
+     * >= 2048) -- a clean 2^7 scale factor vs the expected U/W. At W=1 that
+     * gives 512*U (saturated). To make W=1 a no-op (texel = U) the U/V fixed
+     * point must lose 9 frac bits: persp ufrac = 21 - 9 = 12. (The datasheet's
+     * persp S10.21 is wrong for real DX, exactly as its non-persp S12.8.11 was
+     * wrong -- silicon wants ufrac 21 there, not 11.) Sweep persp ufrac {9..15}
+     * at W=1 over the gradient: the value that renders R rising 0..31 (matching
+     * non-persp TEST 15) is the fix. Then at ufrac=12 sweep W {0.5,1,2,4} at a
+     * constant texel: a working divide must track U/W (R halves per W-doubling)
+     * with NO saturation at W=1. */
+    {
+        struct l10gl_texture g5;
+        uint16_t g5mem[TEX * TEX];
+        gen_uv_gradient(g5mem, TEX);
+        l10gl_tex_image_2d(&ctx, &g5, TEX, TEX, L10GL_TEX_FMT_ARGB1555, g5mem);
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
+        l10gl_bind_texture(&ctx, &g5);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);  /* white = border */
+        hw->tex_dbg_nopersp = 0;   /* PERSPECTIVE (0101) */
+
+        float uv_tex[4][2] = { {0,0},{1,0},{1,1},{0,1} };  /* normalized; draw_quad -> W=1 */
+        int my = (y0 + y1) / 2;
+        int xs[] = { 250, 300, 350, 400, 450, 500, 550 };
+
+        printf("\nTEST 17: persp divide-FIX hunt -- sweep ufrac at W=1\n");
+        printf("  R row at mid-y across U (exp 4 8 12 16 20 24 28); 31=sat, BORD=border\n");
+        for (int uf = 9; uf <= 15; uf++) {
+            hw->tex_dbg_ufrac = uf;
+            l10gl_clear(&ctx);
+            draw_quad(&ctx, x0, y0, x1, y1, zv, uv_tex);   /* W=1 */
+            printf("  ufrac=%2d R:", uf);
+            for (int i = 0; i < 7; i++) {
+                uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)xs[i] * 2);
+                int r = (px >> 10) & 0x1F;
+                if (px == 0x7FFF) printf(" BORD");
+                else              printf(" %4d", r);
+            }
+            printf("   %s\n", (uf == 12) ? "<-- predicted (21 - 9)" : "");
+        }
+
+        /* W-confirmation at ufrac=12: texel must = U/W (R halves per W x2), no sat */
+        hw->tex_dbg_ufrac = 12;
+        float wsv[] = { 0.5f, 1.0f, 2.0f, 4.0f };
+        float uv_c[4][2] = { {16.0f/TEX,16.0f/TEX},{16.0f/TEX,16.0f/TEX},
+                             {16.0f/TEX,16.0f/TEX},{16.0f/TEX,16.0f/TEX} }; /* texel(16,16) */
+        int mx = (x0 + x1) / 2;
+        printf("  ufrac=12, constant texel(16,16), sweep W (expect R=G: 16,8,4,2 = U/W):\n");
+        for (int i = 0; i < 4; i++) {
+            l10gl_clear(&ctx);
+            draw_quad_w(&ctx, x0, y0, x1, y1, zv, wsv[i], uv_c);
+            uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+            int r = (px >> 10) & 0x1F, g = (px >> 5) & 0x1F;
+            printf("    W=%-5.3g center=0x%04x R=%-2d G=%-2d\n", wsv[i], px, r, g);
+        }
 
         hw->tex_dbg_nopersp = 0;
         hw->tex_dbg_ufrac = -1;
