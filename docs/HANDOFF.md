@@ -538,16 +538,26 @@ the dead addressing, it does not fix it.) Datasheet grounding
 memory addresses"; 816-870 confirm TUS/TVS + TdUdX/TdVdX + TdUdY/TdVdY +
 TBU/TBV(=0) are the full set — we program every register it names.
 
-**v13 (56d354c) PENDING RUN: isolates START from the deltas.** Constant UV
-(du=dv=0) so the START register (TUS/TVS) alone picks the texel. Gradient
-texture, sweep UV {(0,0),(16,16),(32,32),(48,48),(63,63)}, non-persp ufrac 19,
-RAW center pixel (so texel(0,0)=0x8001 ≠ border 0x0000).
+**v13 RESULT (56d354c, silicon): ALL UV read 0x0000 = BORDER, incl. UV=(0,0)
+(NOT texel(0,0)=0x8001). Registers ARE correct — TUS=0x01f80000 (=63<<19),
+deltas=0 (constant UV), TEX_BASE=0x2bf200, CMD=0x8cc0c644 (non-persp 0001,
+WRAP bit26=1, NEAREST, s=6, ARGB1555). START is correctly programmed yet still
+borders.** This OVERTURNS v12's "stuck at texel(0,0)": in v12 TEX_BDR_CLR was
+0, so 0x0000 (border) was indistinguishable from 0x8001 (texel 0) by R/G alone
+— the same trap as TEST 6a. v12/v13 both read BORDER, not texel(0,0). **REAL
+PARADOX: TEST 11's SOLID RED FETCHED under WRAP (0x7c00) but the gradient
+BORDERS under WRAP** — same WRAP/path/ufrac, different texture. Fetch-vs-border
+is TEXTURE-SPECIFIC, not coordinate-specific.
+
+**v14 (266f070) PENDING RUN: white border + VRAM readback + red control.** Sets
+border=WHITE (0x7FFF, bit15=0 — distinct from any gradient texel, all bit15=1)
+so border is unmistakable, re-reads each texture's VRAM, and sweeps UV over the
+ORIGINAL gradient, a FRESH re-uploaded gradient (new address), and a RED control.
   RUN: `git pull && make -B BACKEND=virge texprobe && sudo ./texprobe`.
-  Paste TEST 13. VERDICT:
-  - center tracks UV (UV=32,32 → R16 G16) → START selects the texel → the
-    deltas (TdUdX/TdVdX/TdUdY/TdVdY) are dead on real DX; iteration is the bug.
-  - always texel(0,0) → START ignored too → whole U/V→address path dead; chase
-    `tex_coord_fixed` / the texel-int bit field / a missing setup step next.
+  Paste TEST 14. center=0x7FFF→BORDER, 0x0000→clobbered VRAM, texel-color→FETCH.
+  - GRAD fresh fetches but GRAD orig borders → long-lived gradient VRAM clobbered.
+  - both gradients border but RED fetches → gradient-specific (address or data).
+  - all fetch → v13's 0x0000 was stale state.
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same
