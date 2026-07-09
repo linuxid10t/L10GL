@@ -646,15 +646,22 @@ struct virge_ctx {
      * production. */
     int      tex_dbg_ufrac;
 
-    /* Texture path select. The perspective command (0101) SATURATES on real DX
-     * silicon -- U/W blows up to max for every non-zero texel, even at W=1.0
-     * where the divide should be a no-op (texprobe v15, commit 095173e). So the
-     * PRODUCTION default is 1 = NON-perspective (command 0001): the affine
-     * sampler uses U/V directly (no W divide), where the texel<<21 encoding is
-     * silicon-proven correct. The perspective-debug axis sets this to 0 to
-     * exercise the broken persp path; root cause TBD (datasheet is silent on the
-     * divide algorithm, no trusted driver reference). */
+    /* Texture path select. 0 = PERSPECTIVE (command 0101), 1 = NON-perspective
+     * (command 0001, affine). PRODUCTION default is 0 (perspective): the persp
+     * divide was DECODED + FIXED on silicon 2026-07-09 (texprobe TEST 16/17) --
+     * the engine computes texel = 128*TUS/TWS, so persp uses ufrac 12 (not 21)
+     * and pre-multiplies U,V by W (see tex_dbg_nopremult). Was 1 (non-persp)
+     * while the persp divide saturated; kept as the switch back to affine. */
     int      tex_dbg_nopersp;
+
+    /* Perspective U,V pre-multiply by W. The engine interpolates TUS/TVS/TWS
+     * linearly and divides per pixel (texel = TUS/TWS, silicon TEST 16/17); for
+     * that divide to recover the true U, supply the homogeneous products U*W,
+     * V*W so (U*W)/W = U is perspective-correct (no texture swim). PRODUCTION
+     * default 0 = premult ON. Set 1 to ISOLATE the raw divide -- texprobe TEST
+     * 16/17 do this to decode the 128*TUS/TWS relationship at constant W (where
+     * premult would cancel W and hide the divide). */
+    int      tex_dbg_nopremult;
 };
 
 /* ========================================================================

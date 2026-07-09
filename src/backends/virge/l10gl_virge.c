@@ -244,13 +244,14 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
     priv->tex_wrap = L10GL_WRAP_REPEAT;
     priv->blend_enabled = 0;
     priv->tex_has_alpha = 0;
-    priv->hw.tex_dbg_ufrac = -1;  /* default: datasheet frac_bits = 27-s_val */
-    priv->hw.tex_dbg_nopersp = 1; /* DEFAULT non-perspective: the perspective
-                                   * command (0101) SATURATES on real DX (every
-                                   * texel -> U/W blows up to max even at W=1.0;
-                                   * texprobe v15, commit 095173e). Non-perspective
-                                   * + ufrac=21 + WRAP is silicon-proven correct.
-                                   * The persp-debug axis toggles this to 0. */
+    priv->hw.tex_dbg_ufrac = -1;   /* default: per-path (non-persp 27-s, persp 12) */
+    priv->hw.tex_dbg_nopremult = 0;/* default: U,V pre-mult by W ON (perspective-correct) */
+    priv->hw.tex_dbg_nopersp = 0;  /* DEFAULT perspective: the persp divide is FIXED
+                                    * on real DX (texel = 128*TUS/TWS, silicon
+                                    * texprobe TEST 16/17 2026-07-09) -- persp ufrac
+                                    * 12 + U*W pre-mult renders perspective-correct
+                                    * (no texture swim). Was 1 (non-persp) while persp
+                                    * saturated; toggle to 1 to fall back to affine. */
 
     /* Seed ctx->z_cmd_bits from the defaults above (GL default: LESS).
      * Overrides the LEQUAL default virge_init set for direct callers.

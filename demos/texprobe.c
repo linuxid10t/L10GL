@@ -974,8 +974,9 @@ int main(int argc, char **argv)
         l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
         l10gl_bind_texture(&ctx, &g4);
         virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);  /* white = border */
-        hw->tex_dbg_nopersp = 0;   /* PERSPECTIVE (0101) -- the broken path */
-        hw->tex_dbg_ufrac = 21;    /* datasheet persp format S10.21 */
+        hw->tex_dbg_nopersp = 0;     /* PERSPECTIVE (0101) */
+        hw->tex_dbg_nopremult = 1;   /* isolate raw divide (no U*W pre-mult) */
+        hw->tex_dbg_ufrac = 21;      /* datasheet persp format S10.21 */
 
         int   us[] = { 4, 8, 16, 32 };                          /* U texel (rows) */
         /* Wide geometric W range: low end (1/16) catches a MULTIPLY; high end
@@ -1030,6 +1031,7 @@ int main(int argc, char **argv)
         #undef N16W
 
         hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_nopremult = 0;
         hw->tex_dbg_ufrac = -1;
         l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
         virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
@@ -1055,7 +1057,8 @@ int main(int argc, char **argv)
         l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
         l10gl_bind_texture(&ctx, &g5);
         virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00007FFF);  /* white = border */
-        hw->tex_dbg_nopersp = 0;   /* PERSPECTIVE (0101) */
+        hw->tex_dbg_nopersp = 0;     /* PERSPECTIVE (0101) */
+        hw->tex_dbg_nopremult = 1;   /* isolate raw divide (no U*W pre-mult) */
 
         float uv_tex[4][2] = { {0,0},{1,0},{1,1},{0,1} };  /* normalized; draw_quad -> W=1 */
         int my = (y0 + y1) / 2;
@@ -1093,6 +1096,7 @@ int main(int argc, char **argv)
         }
 
         hw->tex_dbg_nopersp = 0;
+        hw->tex_dbg_nopremult = 0;
         hw->tex_dbg_ufrac = -1;
         l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
         virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);

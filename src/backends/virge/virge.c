@@ -1482,18 +1482,18 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     /*
      * Texture coordinate gradients.
      *
-     * The ViRGE interpolates U, V, W linearly across the triangle
-     * (in screen space) when perspective correction is enabled.
-     * We compute dU/dX, dU/dY, dV/dX, dV/dY, dW/dX, dW/dY using
-     * the same plane-equation approach as color gradients.
+     * The ViRGE interpolates U, V, W linearly across the triangle (in screen
+     * space) and, for the PERSPECTIVE command (0101), divides U,V by W per
+     * pixel. We compute dU/dX, dU/dY, dV/dX, dV/dY, dW/dX, dW/dY with the same
+     * plane-equation approach as color gradients.
      *
      * The caller provides W = 1/Z_eye (perspective) or W = 1.0 (disable).
-     * Per the API contract (l10gl.h) U and V arrive NORMALIZED in [0,1];
-     * the engine takes texel-unit coords (the texel integer is bits 30:21 of
-     * the S(4+s).(27-s) value), so scale by the texture side 2^s once here --
-     * every gradient and start below then derives in texel units. (texprobe
-     * v1/v2 assumed this scaling; its absence made a normalized UV of 1.0
-     * select texel 1 instead of 63. Independent of the persp-saturates bug.)
+     * Per the API contract (l10gl.h) U and V arrive NORMALIZED in [0,1]; the
+     * engine takes texel-unit coords, so scale by the texture side 2^s once
+     * here -- every gradient and start below then derives in texel units.
+     * (texprobe v1/v2 assumed this scaling; its absence made a normalized UV of
+     * 1.0 select texel 1 instead of 63.) For perspective the driver also
+     * pre-multiplies U,V by W (below) so the engine's (U*W)/W divide recovers U.
      */
     int s_val = (ctx->tex_cmd_bits >> 8) & 0xF;
     if (s_val == 0) s_val = 6;  /* safe default */
@@ -1501,6 +1501,19 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     v0.u *= tex_scale; v0.v *= tex_scale;
     v1.u *= tex_scale; v1.v *= tex_scale;
     v2.u *= tex_scale; v2.v *= tex_scale;
+
+    /* Perspective-correct texturing: the engine interpolates TUS/TVS/TWS
+     * linearly and divides per pixel (texel = TUS/TWS, proven on silicon --
+     * texprobe TEST 16/17, 2026-07-09). For that divide to recover the TRUE U,
+     * supply the homogeneous products U*W, V*W (and W itself), so (U*W)/W = U is
+     * perspective-correct and textures do not swim. Done here, before the
+     * gradient setup, so the gradients below are of U*W. Skipped for non-persp
+     * (no divide) and for divide-isolation probes (tex_dbg_nopremult). */
+    if (!ctx->tex_dbg_nopersp && !ctx->tex_dbg_nopremult) {
+        v0.u *= v0.w; v0.v *= v0.w;
+        v1.u *= v1.w; v1.v *= v1.w;
+        v2.u *= v2.w; v2.v *= v2.w;
+    }
 
     float dx10 = v1.x - v0.x;
     float dy10 = v1.y - v0.y;
@@ -1566,10 +1579,15 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     /* s_val (texture side 2^s, from CMD_SET bits 11-8) was computed above,
      * where tex_scale = 2^s scaled the normalized vertex UV into texel units. */
 
-    /* U/V fractional-bit count. Default = datasheet S(4+s).(27-s); the
-     * tex_dbg_ufrac override (texprobe v7 perspective-scale hunt) replaces it
-     * wholesale for every U/V start and delta below. */
-    int ufrac = (ctx->tex_dbg_ufrac >= 0) ? ctx->tex_dbg_ufrac : (27 - s_val);
+    /* U/V fractional-bit count. Two silicon-proven values:
+     *   NON-persp: 27-s_val (=21 for s=6) -- v15: ufrac 21 perfect, 19 -> R/4
+     *     (the datasheet's non-persp S12.8.11 / 11 is WRONG for real DX).
+     *   PERSP:     12 -- the engine divide is texel = 128*TUS/TWS (v17 TEST 16:
+     *     all 32 cells match), a 2^7 factor vs U/W, so U must lose 9 frac bits
+     *     and 21-9=12 makes W=1 a no-op (the datasheet's persp S10.21 / 21 is
+     *     wrong for real DX too). tex_dbg_ufrac overrides both for probing. */
+    int default_ufrac = ctx->tex_dbg_nopersp ? (27 - s_val) : 12;
+    int ufrac = (ctx->tex_dbg_ufrac >= 0) ? ctx->tex_dbg_ufrac : default_ufrac;
 
     virge_wait_engine(ctx);
     program_3d_state(ctx);  /* re-arm: 2D ops clobber Z_STRIDE to 0xFF8 on real DX */

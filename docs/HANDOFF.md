@@ -25,10 +25,11 @@ W=1.0) — so the cube defaults to non-perspective (affine). REMAINING "after"
 axis: debug the broken perspective path (would eliminate the swim) + verify
 LINEAR. Driver audit 2026-07-09: the persp register footprint is IDENTICAL to
 non-persp (same code; only the command bits differ, 0101 vs 0001), so the bug
-is engine/format-side, not an obvious driver mistake. **PERSP DIVIDE DECODED
-v17 (silicon 2026-07-09): the engine computes texel = 128·TUS/TWS (mod 64, sat
-≥2048) — a 2^7 scale factor vs U/W; fix = persp ufrac 12 (not 21). TEST 17
-confirms the ufrac=12 fix this build.** See #5.
+is engine/format-side, not an obvious driver mistake. **PERSP DIVIDE DECODED +
+FIXED v17 (silicon 2026-07-09): engine computes texel = 128·TUS/TWS (mod 64, sat
+≥2048); fix = persp ufrac 12 (TEST 17: ufrac=12 renders the gradient EXACT) +
+supply U·W/V·W (perspective-correct) + default persp back on. Cube should now
+render with NO swim — awaiting David's run.** See #5.
 
 ## Test setup (fixed, do not re-derive)
 
@@ -633,17 +634,23 @@ at fixed V there is NO coupling (G tracks V/W symmetrically). Regs read back
 correct (TUS=U<<21, TVS=V<<21, TWS=W<<19, CMD bits 30:27=0101 persp, bit26 WRAP)
 so this is engine-format-side, not a driver programming error.
 
-**FIX HYPOTHESIS:** to make W=1 a no-op (texel=U), U/V must lose 9 frac bits →
-**perspective ufrac = 21 − 9 = 12** (datasheet persp S10.21 is wrong for real DX,
-exactly as its non-persp S12.8.11/ufrac-11 was wrong — silicon wants 21 there).
-Equivalent: W could gain 9 bits (frac 28); ufrac is the knob kept. CONFIRM probe
-TEST 17 (this build): sweep persp ufrac {9..15} at W=1 → the value rendering the
-gradient 0..31 is the fix (predicted 12); then at ufrac=12 sweep W {0.5,1,2,4}
-→ must track U/W (R halves per W-doubling), no saturation at W=1. ON CONFIRM:
-driver fix = persp path uses ufrac 12, and (for the cube) supply TUS=U·W /
-TVS=V·W so the engine's (U·W)/W = U is perspective-correct; flip tex_dbg_nopersp
-default to 0 (re-enable persp); cube can then drop affine. tex_dbg_ufrac stays
-to override during the fix. See [[source-trust-hierarchy]] (datasheet > driver).
+**FIX CONFIRMED + LANDED (silicon 2026-07-09):** TEST 17 swept persp ufrac
+{9..15} at W=1 — **ufrac=12 renders R `4 8 12 16 20 24 28` EXACT** (neighbors
+bracket it: 11→R/2, 10→R/4, 13→2×+wrap). And at ufrac=12 the W-sweep tracks U/W
+cleanly (W=0.5→R16, W=1→R8, W=2→R4; W=4→R1, a 1-bit rounding at the extreme,
+irrelevant — the cube's W≈0.17–0.25 is in the exact region). The `21−9=12` model
+is confirmed. **Driver fix pushed** (this build):
+- persp path uses **ufrac 12** (was 21); non-persp stays 21. virge.c.
+- persp path **pre-multiplies U,V by W** (TUS=U·W, TVS=V·W) so the engine's
+  (U·W)/W = U is perspective-correct (no swim). Standard homogeneous interp;
+  airtight given the proven divide. virge.c.
+- **tex_dbg_nopersp default → 0** (re-enable perspective); cube drops affine.
+  l10gl_virge.c.
+- new **tex_dbg_nopremult** knob (default 0=premult on); texprobe TEST 16/17 set
+  it to 1 to keep isolating the raw divide (premult would cancel W and hide it).
+AWAITING David's run: textured_cube should render with **no texture swim**
+(perspective-correct). If it distorts instead, the premult convention is wrong
+and we revisit (but it's textbook given the divide). See [[source-trust-hierarchy]].
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same
