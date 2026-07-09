@@ -310,6 +310,41 @@ int main(int argc, char **argv)
         hw->tex_base = (uint32_t)(uintptr_t)tex.backend_data;   /* restore */
     }
 
+    /* ---- TEST 5: address-encoding fill -> exactly WHERE does the engine read?
+     * TEST 4b showed the engine ignores TEX_BASE (markers invisible at every
+     * base, incl. low), and TEST 4a showed it still tiles (deltas applied) ->
+     * it reads a FIXED base. To find it, fill ALL of VRAM so each 16-bit texel
+     * encodes its own byte offset (low 15 bits in R/G/B, alpha=1 so it isn't
+     * treated as transparent), then draw UV=(0,0). The center pixel's R/G/B
+     * reveals the byte offset the engine actually sampled. Repeat for two
+     * TEX_BASE values: if the decoded offset is the SAME for both, the base is
+     * truly fixed (independent of TEX_BASE); if it tracks TEX_BASE, the engine
+     * does honor TEX_BASE and the earlier marker result needs re-reading.
+     * NOTE: 15 bits -> offset known mod 64KB; enough to tell base 0 (decodes
+     * 0) from TEX_BASE 0x2bf200 (decodes 0xe600) from any other fixed base. */
+    {
+        l10gl_bind_texture(&ctx, &tex);
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        uint32_t bases[] = { 0x2bf200, 0x000000 };
+        float uv00[4][2] = { {0,0},{0,0},{0,0},{0,0} };
+        printf("\nTEST 5: address-encoding fill (each texel = its byte offset); draw UV=0,0\n");
+        for (int b = 0; b < 2; b++) {
+            l10gl_clear(&ctx);
+            uint16_t *v = (uint16_t *)hw->fb;
+            uint32_t n = hw->vram_size / 2;
+            for (uint32_t i = 0; i < n; i++) v[i] = (uint16_t)(0x8000 | (i & 0x7FFF));
+            hw->tex_base = bases[b];
+            draw_quad(&ctx, x0, y0, x1, y1, zv, uv00);
+            int mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+            uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+            int r = (px >> 10) & 0x1F, g = (px >> 5) & 0x1F, pp = px & 0x1F;
+            uint32_t dec = ((uint32_t)r << 10) | ((uint32_t)g << 5) | pp;  /* texel idx, low 15b */
+            printf("  TEX_BASE=0x%06x -> center=0x%04x R/G/B=%d/%d/%d -> sampled texel=0x%x (byte 0x%x, mod 64KB)\n",
+                   bases[b], px, r, g, pp, dec, dec * 2);
+        }
+        hw->tex_base = (uint32_t)(uintptr_t)tex.backend_data;
+    }
+
     printf("\nDone. Ctrl-C to exit.\n");
     while (running) { if (getchar() == EOF) break; }
     l10gl_destroy(&ctx);
