@@ -15,21 +15,18 @@ fractional-Y prestep. Float-dy fix (195260c) closed the wedges but left
 9/36 orientations with a coverage NOTCH at shared face diagonals — root
 caused + fixed (lr=0 X-attribute-delta sign error, df35256) and VERIFIED
 on silicon 2026-07-08: cubefb 36-sweep = 0 holes (see follow-up #4).
-CURRENT OPEN AXIS: textured_cube — AFFINE PATH VERIFIED ON SILICON
-2026-07-09 (David): cube renders its 6 textures (NEAREST) with the expected
-affine texture-swim; texprobe TEST 15 non-persp ufrac=21 is STILL the perfect
-grid (confirms the UV-scaling fix didn't regress). Two real bugs were found+
-fixed: (1) driver wasn't scaling normalized [0,1] UV by texture side (contract
-bug); (2) the PERSPECTIVE command saturates on real DX (U/W blows up even at
-W=1.0) — so the cube defaults to non-perspective (affine). REMAINING "after"
-axis: debug the broken perspective path (would eliminate the swim) + verify
-LINEAR. Driver audit 2026-07-09: the persp register footprint is IDENTICAL to
-non-persp (same code; only the command bits differ, 0101 vs 0001), so the bug
-is engine/format-side, not an obvious driver mistake. **PERSP DIVIDE DECODED +
-FIXED v17 (silicon 2026-07-09): engine computes texel = 128·TUS/TWS (mod 64, sat
-≥2048); fix = persp ufrac 12 (TEST 17: ufrac=12 renders the gradient EXACT) +
-supply U·W/V·W (perspective-correct) + default persp back on. Cube should now
-render with NO swim — awaiting David's run.** See #5.
+CURRENT OPEN AXIS: textured_cube — FULLY RESOLVED & VERIFIED ON SILICON
+2026-07-09 (David: "the cube looks perfect"). Perspective-correct hardware
+texturing works end to end: the cube renders its 6 textures with NO swim.
+Three bugs were found+fixed across v15–v17: (1) driver wasn't scaling normalized
+[0,1] UV by texture side (contract bug, 8813cc8); (2) the perspective command
+(0101) saturates because the engine divide is texel = 128·TUS/TWS (a 2^7 factor
+vs U/W) — fixed by persp ufrac 12 (TEST 17 confirmed EXACT); (3) for the divide
+to recover U, supply TUS=U·W / TVS=V·W (perspective-correct, d982e42). The
+datasheet's persp S10.21 is wrong for real DX (ufrac 12), just as its non-persp
+S12.8.11 is (silicon wants 21). **textured_cube AXIS CLOSED.** REMAINING
+(secondary): verify LINEAR filter (cube is on NEAREST) + Ctrl-C console restore.
+See #5 for the full decode.
 
 ## Test setup (fixed, do not re-derive)
 
@@ -648,9 +645,9 @@ is confirmed. **Driver fix pushed** (this build):
   l10gl_virge.c.
 - new **tex_dbg_nopremult** knob (default 0=premult on); texprobe TEST 16/17 set
   it to 1 to keep isolating the raw divide (premult would cancel W and hide it).
-AWAITING David's run: textured_cube should render with **no texture swim**
-(perspective-correct). If it distorts instead, the premult convention is wrong
-and we revisit (but it's textbook given the divide). See [[source-trust-hierarchy]].
+**VERIFIED ON SILICON 2026-07-09 (David: "the cube looks perfect"): no texture
+swim — perspective-correct hardware texturing works end to end. textured_cube
+AXIS CLOSED.** See [[source-trust-hierarchy]].
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same
