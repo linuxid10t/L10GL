@@ -968,8 +968,13 @@ int main(int argc, char **argv)
         hw->tex_dbg_ufrac = 21;    /* datasheet persp format S10.21 */
 
         int   us[] = { 4, 8, 16, 32 };                          /* U texel (rows) */
-        float ws[] = { 1.0f/16, 1.0f/8, 1.0f/4, 1.0f/2,         /* programmed W (cols) */
-                       1.0f, 2.0f, 4.0f, 8.0f };
+        /* Wide geometric W range: low end (1/16) catches a MULTIPLY; high end
+         * (128, =0x04000000 still S=0 in S12.19) catches a deep under-read
+         * DIVIDE. v15 showed even U=texel4 saturates at W=1 -> the effective
+         * scale factor is ~16x, so the sweep must reach well past 1 to resolve
+         * the divide's transition (else it falsely reads "TWS ignored"). */
+        float ws[] = { 1.0f/16, 1.0f/4, 1.0f/2, 1.0f,
+                       4.0f, 16.0f, 64.0f, 128.0f };
         #define N16U ((int)(sizeof(us)/sizeof(us[0])))
         #define N16W ((int)(sizeof(ws)/sizeof(ws[0])))
         const int tile_w = 80, tile_h = 80, gap_x = 5, gap_y = 10;
