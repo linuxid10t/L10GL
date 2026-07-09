@@ -2086,6 +2086,36 @@ void virge_cleanup(struct virge_ctx *ctx)
                             "(size=%zu) -- screen will show the last 3D frame\n",
                     ctx->saved_console_vram_size);
         }
+
+        /* Print the SAVED display-start (the console's scanout origin that the
+         * CRTC will scan once the mode restore below takes effect). Indices:
+         * saved_scanout[14]=CR0C, [15]=CR0D, [16]=CR69 (see virge_scanout_regs). */
+        {
+            uint32_t sv = ((uint32_t)ctx->saved_scanout[16] << 16)
+                        | ((uint32_t)ctx->saved_scanout[14] << 8)
+                        | (uint32_t)ctx->saved_scanout[15];
+            printf("S3 ViRGE: saved (console) display-start -> byte 0x%x\n",
+                   sv << 2);
+            fflush(stdout);
+        }
+
+        /* DECISIVE TEST: can the 2D ENGINE (CRTC-coherent memory port) displace
+         * the cube at offset 0, bypassing the CPU aperture? Engine-fill the
+         * scanout region (offset 0, width x height) with bright red. If red
+         * shows after the mode restore, engine writes reach the CRTC scanout
+         * -> the CPU memcpy was the failure (write-combined aperture / reads
+         * returned 0 so the snapshot was zeros). If the cube survives, the
+         * CRTC scans a region the engine doesn't write. */
+        {
+            uint32_t saved_fb_base = ctx->fb_base;
+            ctx->fb_base = 0;
+            virge_fill_rect(ctx, 0, 0, ctx->width, ctx->height, 0x7C00); /* red */
+            virge_wait_engine(ctx);
+            ctx->fb_base = saved_fb_base;
+            printf("S3 ViRGE: engine-filled offset 0 (%dx%d) red as a marker\n",
+                   ctx->width, ctx->height);
+            fflush(stdout);
+        }
         virge_wait_vsync(ctx);
         vga_crtc_write(0x11,
                        ctx->saved_scanout[VIRGE_SCANOUT_CR11_IDX] & 0x7F);
