@@ -245,7 +245,12 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
     priv->blend_enabled = 0;
     priv->tex_has_alpha = 0;
     priv->hw.tex_dbg_ufrac = -1;  /* default: datasheet frac_bits = 27-s_val */
-    priv->hw.tex_dbg_nopersp = 0; /* default: perspective texture command */
+    priv->hw.tex_dbg_nopersp = 1; /* DEFAULT non-perspective: the perspective
+                                   * command (0101) SATURATES on real DX (every
+                                   * texel -> U/W blows up to max even at W=1.0;
+                                   * texprobe v15, commit 095173e). Non-perspective
+                                   * + ufrac=21 + WRAP is silicon-proven correct.
+                                   * The persp-debug axis toggles this to 0. */
 
     /* Seed ctx->z_cmd_bits from the defaults above (GL default: LESS).
      * Overrides the LEQUAL default virge_init set for direct callers.

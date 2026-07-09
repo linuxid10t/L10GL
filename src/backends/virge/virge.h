@@ -646,12 +646,14 @@ struct virge_ctx {
      * production. */
     int      tex_dbg_ufrac;
 
-    /* DEBUG OVERRIDE: force the NON-perspective texture command (0001 instead
-     * of 0101) to test whether real DX's affine texture path reads texels when
-     * the perspective-divide path borders everything (texprobe v7 proved every
-     * ufrac borders under perspective, even at UV=0). 0 = perspective (normal);
-     * 1 = non-perspective. The non-persp sampler uses U/V directly (no divide),
-     * where the texel<<21 encoding is correct. */
+    /* Texture path select. The perspective command (0101) SATURATES on real DX
+     * silicon -- U/W blows up to max for every non-zero texel, even at W=1.0
+     * where the divide should be a no-op (texprobe v15, commit 095173e). So the
+     * PRODUCTION default is 1 = NON-perspective (command 0001): the affine
+     * sampler uses U/V directly (no W divide), where the texel<<21 encoding is
+     * silicon-proven correct. The perspective-debug axis sets this to 0 to
+     * exercise the broken persp path; root cause TBD (datasheet is silent on the
+     * divide algorithm, no trusted driver reference). */
     int      tex_dbg_nopersp;
 };
 
