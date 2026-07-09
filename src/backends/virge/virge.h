@@ -635,6 +635,14 @@ struct virge_ctx {
      * instead of (27 - s_val); -1 = default. Set by texprobe, ignored in
      * production. */
     int      tex_dbg_ufrac;
+
+    /* DEBUG OVERRIDE: force the NON-perspective texture command (0001 instead
+     * of 0101) to test whether real DX's affine texture path reads texels when
+     * the perspective-divide path borders everything (texprobe v7 proved every
+     * ufrac borders under perspective, even at UV=0). 0 = perspective (normal);
+     * 1 = non-perspective. The non-persp sampler uses U/V directly (no divide),
+     * where the texel<<21 encoding is correct. */
+    int      tex_dbg_nopersp;
 };
 
 /* ========================================================================

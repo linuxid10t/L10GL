@@ -1651,12 +1651,16 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
                   ((scan_01 & 0x7FF) << 16) |
                   (scan_12 & 0x7FF));
 
-    /* --- Command Set: lit texture triangle with perspective ---
+    /* --- Command Set: lit texture triangle (perspective by default) ---
      * Z-buffering bits come from ctx->z_cmd_bits (cached depth state);
      * texture format/filter/blend/wrap come from ctx->tex_cmd_bits.
-     * No VIRGE_CMD_CLIP_ENABLE -- see the comment in virge.h. */
+     * No VIRGE_CMD_CLIP_ENABLE -- see the comment in virge.h.
+     * tex_dbg_nopersp swaps in the NON-perspective command (0001) whose sampler
+     * uses U/V directly -- a diagnostic for the border-color bug (texprobe v8). */
+    uint32_t tex_cmd = ctx->tex_dbg_nopersp ? VIRGE_3D_LIT_TEX      /* 0001 */
+                                            : VIRGE_3D_LIT_TEX_PERSP; /* 0101 */
     uint32_t cmd = VIRGE_CMD_3D
-                 | VIRGE_3D_LIT_TEX_PERSP   /* 0101: lit texture + perspective */
+                 | tex_cmd
                  | ctx->dest_format
                  | ctx->tex_cmd_bits         /* texture format, filter, blend, wrap */
                  | ctx->z_cmd_bits           /* ZB mode, compare code, Z update */

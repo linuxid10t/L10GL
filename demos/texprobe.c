@@ -453,6 +453,37 @@ int main(int argc, char **argv)
         l10gl_bind_texture(&ctx, &tex);         /* restore gradient texture */
     }
 
+    /* ---- TEST 8: NON-perspective path -- does real DX read texels at all?
+     * v7 proved NO U/V scale works under the PERSPECTIVE command (0101): it
+     * borders even at UV=0 (u_final=0, in range). The non-perspective command
+     * (0001) uses U/V directly (no W divide), where the driver's texel<<21
+     * encoding is correct. UV here spans 0..TEX in TEXEL units (the driver does
+     * NOT normalize caller UV), so a working path interpolates R/G 0..31.
+     * TEX_BDR_CLR=blue (0x001F) so any border reads as flat R=0. */
+    {
+        l10gl_bind_texture(&ctx, &tex);
+        l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+        float uv_tex[4][2] = { {0,0},{TEX,0},{TEX,TEX},{0,TEX} };
+        int mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+
+        printf("\nTEST 8: NON-perspective (0001) vs perspective (0101); UV 0..%d; BLUE border\n", TEX);
+        hw->tex_dbg_nopersp = 1;
+        l10gl_clear(&ctx);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x0000001F);
+        draw_quad(&ctx, x0, y0, x1, y1, zv, uv_tex);
+        rg_grid("  8a NON-perspective gradient (UV 0,0 -> TEX,TEX)", base, stride, x0, y0, x1, y1);
+
+        hw->tex_dbg_nopersp = 0;  /* perspective baseline */
+        l10gl_clear(&ctx);
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x0000001F);
+        draw_quad(&ctx, x0, y0, x1, y1, zv, uv_tex);
+        uint16_t px = *(uint16_t *)(base + (size_t)my * stride + (size_t)mx * 2);
+        printf("  8b PERSPECTIVE baseline: center=0x%04x R=%d B=%d (expect blue border: R=0 B=31)\n",
+               px, (px >> 10) & 0x1F, px & 0x1F);
+
+        virge_write32(hw, VIRGE_3D_TEX_BDR_CLR, 0x00000000);
+    }
+
     printf("\nDone. Ctrl-C to exit.\n");
     while (running) { if (getchar() == EOF) break; }
     l10gl_destroy(&ctx);
