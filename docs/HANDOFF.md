@@ -527,20 +527,27 @@ CORRECT, or is WRAP just masking a garbage coordinate back into range?**
 A SOLID texture reads RED for any in-range texel, so it can't tell which
 texel WRAP fetched.
 
-**v12 (a7ab1ee) PENDING RUN: gradient-under-WRAP discriminator.** Draws the
-gradient texture (R=x>>1, G=y>>1) under WRAP, UV 0..TEX in texel units, and
-reads back the R/G grid:
-  12a non-perspective (0001, ufrac 19 — datasheet S12.8.11 affine format)
-  12b perspective     (0101, ufrac 21 — the path the animated cube uses)
-  12c non-perspective CLAMP (contrast — expect all 0 / border)
+**v12 RESULT (a7ab1ee, silicon): under WRAP the address is STUCK at texel(0,0).**
+12a (non-persp) and 12b (persp) gradient-under-WRAP both read R0 G0 at EVERY
+grid point — i.e. every pixel fetches texel(0,0) (the only gradient texel with
+R=G=0 = 0x8001). So the engine DOES fetch under WRAP (TEST 11: no border), but
+the U/V coordinate does NOT select which texel — the fetch address is pinned at
+TEX_BASE+0. (My "coords correct → use WRAP" prediction was WRONG — WRAP masks
+the dead addressing, it does not fix it.) Datasheet grounding
+(s3d_programming.txt:960-963): "the integer components of U and V generate the
+memory addresses"; 816-870 confirm TUS/TVS + TdUdX/TdVdX + TdUdY/TdVdY +
+TBU/TBV(=0) are the full set — we program every register it names.
+
+**v13 (56d354c) PENDING RUN: isolates START from the deltas.** Constant UV
+(du=dv=0) so the START register (TUS/TVS) alone picks the texel. Gradient
+texture, sweep UV {(0,0),(16,16),(32,32),(48,48),(63,63)}, non-persp ufrac 19,
+RAW center pixel (so texel(0,0)=0x8001 ≠ border 0x0000).
   RUN: `git pull && make -B BACKEND=virge texprobe && sudo ./texprobe`.
-  Paste TEST 12 (a/b/c grids). VERDICT:
-  - 12a/12b R rises 0..31 L→R AND G rises 0..31 T→B → coords CORRECT, WRAP
-    fetches the right texel → CLAMP is the sole bug (real-DX clamp-to-border
-    misfiring in-range) → fix = use WRAP for the cube, then drop the debug
-    overrides (tex_dbg_ufrac/tex_dbg_nopersp).
-  - 12a/12b flat/scrambled → U/V encoding wrong, WRAP masking garbage →
-    chase `tex_coord_fixed` / the W divide next.
+  Paste TEST 13. VERDICT:
+  - center tracks UV (UV=32,32 → R16 G16) → START selects the texel → the
+    deltas (TdUdX/TdVdX/TdUdY/TdVdY) are dead on real DX; iteration is the bug.
+  - always texel(0,0) → START ignored too → whole U/V→address path dead; chase
+    `tex_coord_fixed` / the texel-int bit field / a missing setup step next.
 
 VERIFIED FACTS (still hold): upload IS correct in VRAM (v3: 5/5 texels
 match at 0x2bf200); coherence is NOT the issue (BAR0 O_SYNC, scantest same
