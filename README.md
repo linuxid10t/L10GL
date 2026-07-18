@@ -22,8 +22,10 @@ of VRAM. The following paths are verified on silicon:
 - native RGB555 scanout takeover when no fbdev driver owns the card
 - double-buffered, vsync-synchronized page flips
 
-The spinning `cube` and `textured_cube` demos render correctly and tear-free on
-that machine. The Matrox MGA-1064SG backend builds and remains structurally
+The former screen-space `cube` and `textured_cube` implementations were
+verified correct and tear-free on that machine. Their X6 model-space pipeline
+ports produce byte-identical first frames under swrast and await ViRGE
+reconfirmation. The Matrox MGA-1064SG backend builds and remains structurally
 supported, but has not yet been validated on hardware. The software backend
 provides deterministic offscreen rendering and pixel-level tests on machines
 without either card.
@@ -198,6 +200,9 @@ The repository retains the small ViRGE probes used to settle hardware behavior:
 `scantest`, `filltest`, `tritest`, `gltritest`, `fliptest`, `dztest`, `seamtest`,
 `cubefb`, `diagap`, and `texprobe`. They build with the normal `make` invocation
 and intentionally bypass some frontend abstractions.
+
+`rawtri` is the canonical static raw screen-space Gouraud bring-up demo.
+`triangle` remains as a compatibility executable built from the same source.
 
 Use them only for the investigation described in their source comments and in
 `docs/HANDOFF.md`; several directly manipulate scanout or inspect VRAM.

@@ -104,7 +104,8 @@ TRIANGLE_FAN, LINES, and LINE_STRIP through X1 into the existing screen-space
 backend calls. Strip winding alternates correctly; fan origin is fixed;
 texture binding selects textured dispatch; CCW culling happens in NDC before
 the top-left framebuffer Y conversion. `test-pipeline` uses a capture backend
-to verify exact calls and vertices. Existing demos are not ported yet (X6).
+to verify exact calls and vertices. X6 now exercises this path in both primary
+cube demos.
 
 Phase 2 X3 is complete as of 2026-07-17. Immediate-mode triangles are clipped
 in homogeneous space against `Z + W >= 0` before perspective division and
@@ -127,7 +128,7 @@ and material alpha are clamped and captured before X3 clipping. `test-pipeline`
 covers full diffuse, ambient-only, invalid directions, normalization, clamping,
 per-vertex material changes, non-uniform/reflected/singular transforms, and
 disabled-lighting compatibility. Existing demos and all backend code remain
-unchanged.
+unchanged at the X4 landing; X6 now consumes this lighting path in `cube`.
 
 Phase 2 X5 is complete as of 2026-07-18. The immediate-mode projection path
 now emits reciprocal homogeneous clip W. Under L10GL's standard perspective
@@ -136,9 +137,32 @@ matrices this is reciprocal positive eye-space depth; orthographic W remains
 reciprocal, avoiding the incorrect interpolation of already-reciprocal values.
 `test-pipeline` verifies exact W at eye depths 2/4/5, MODELVIEW-translated
 depth, constant orthographic W, textured dispatch, and near-plane
-intersections. The raw screen-space API, the existing demos' explicit W
-values, and all backend code are unchanged. X6 demo ports are now the next
-Phase 2 task.
+intersections. The raw screen-space API and all backend code remain unchanged;
+X6 now uses this generated W in `textured_cube`.
+
+Phase 2 X6 is implemented as of 2026-07-18 and awaits ViRGE confirmation.
+`cube` (`0886adf`) now uses matrix state, model-space immediate triangles,
+pipeline culling, and X4 material lighting. `textured_cube` (`15e337d`) uses
+the same matrix/immediate path and receives all perspective texture W from X5.
+The legacy +Z camera maps to OpenGL eye space with a Z reflection; reversed
+submission winding preserves CCW front faces, and the reflected light vector
+preserves the old diffuse intensities. Both first-frame 640x480 RGB565 swrast
+dumps are byte-identical to their pre-port baselines, and eight-frame ASan/
+UBSan runs pass. `rawtri` (`8cb2e13`) preserves the direct screen-space
+bring-up path, with `triangle` retained as a compatibility executable.
+
+Hardware acceptance:
+
+```sh
+git pull
+make clean && make -j4
+make check
+sudo tools/l10gl-run -- ./cube
+sudo tools/l10gl-run -- ./textured_cube
+```
+
+Expect the same geometry, face lighting, bilinear textures, perspective
+stability, culling, and tear-free page flips as before the ports.
 
 ## Push workflow (non-negotiable — David has corrected agents on this repeatedly)
 
@@ -794,7 +818,8 @@ never copy):
 - `sudo ./scantest` — phase 1: three CPU-drawn layout-hypothesis strips
   (C = 555/1600 must be the clean one); phase 2: full-screen CPU
   pattern at adopted geometry. No engine involvement.
-- `sudo ./triangle`, `./cube` — engine paths (2D clear + Z-clear + 3D).
+- `sudo ./rawtri` (or compatibility `./triangle`), `./cube` — engine paths
+  (2D clear + Z-clear + 3D).
 - `sudo ./filltest` — 2D-fill readback: programs known rects via
   `virge_fill_rect`, CPU-reads VRAM back at corners/center, prints pass/fail
   + a bounding-box locater if a color lands wrong. PASSES as of `385d11d`

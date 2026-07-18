@@ -556,7 +556,8 @@ other vintage cards).
 
 ## Phase 2 — Frontend geometry pipeline
 
-**Status (2026-07-18): X1 through X5 complete; X6 is next.** Matrix
+**Status (2026-07-18): X1 through X5 complete; X6 is implemented and passes
+swrast equivalence, with ViRGE confirmation pending.** Matrix
 stacks and viewport math live in `src/l10gl_xform.c`; current-attribute
 capture, model-space transformation, streaming primitive assembly,
 eye-space directional lighting, homogeneous near clipping, texture dispatch,
@@ -619,9 +620,9 @@ than the ViRGE's 2047-line field. Far-plane crossings and lines that cross a
 depth plane still use conservative whole-primitive rejection.
 
 Mandatory before this pipeline can be trusted: the hardware cannot handle
-vertices behind the eye (the cube demo dodges this with a `z < 0.1` clamp,
-`demos/cube.c:57`). Clip assembled triangles against the near plane in clip
-space (Sutherland–Hodgman, 1 plane → 0, 1, or 2 output triangles),
+vertices behind the eye (the legacy cube formerly dodged this with a depth
+clamp). Clip assembled triangles against the near plane in clip space
+(Sutherland–Hodgman, 1 plane → 0, 1, or 2 output triangles),
 interpolating color/uv/z/w. Guard-band note: X/Y clipping can be left to
 the hardware clip rectangle (already enabled), but clamp the post-viewport
 scan counts to the 11-bit fields (`virge.h:296`) — reject or clip
@@ -642,8 +643,8 @@ preserves the established current-color path exactly.
 Fixed-function subset: one infinite directional light + ambient
 (`l10gl_light_dir`, `l10gl_light_color`, `l10gl_material`), evaluated
 per-vertex from `l10gl_normal3f` in eye space, exactly replacing the math
-in `demos/cube.c:103`. Multiple lights and specular are stretch goals — do
-not block on them.
+formerly carried by `demos/cube.c`. Multiple lights and specular are stretch
+goals — do not block on them.
 
 ### X5. Perspective-correct texture W
 
@@ -663,6 +664,19 @@ texturing (`virge_draw_textured_triangle`) finally gets real W values instead
 of the demo's hand-rolled ones.
 
 ### X6. Port the demos
+
+**Implemented 2026-07-18; ViRGE confirmation pending.** `cube` now describes
+only its mesh, materials, light, camera, and animation while X1-X4 perform all
+transform, culling, clipping, and lighting work. `textured_cube` likewise uses
+immediate-mode model-space vertices and UVs, with X5 generating the reciprocal
+W consumed by the existing perspective texture paths. A 53.130102-degree
+projection and a camera-convention Z reflection reproduce the legacy screen
+geometry. Both demos' first 640x480 RGB565 swrast PPMs are byte-for-byte
+identical to their pre-port baselines, and both pass eight-frame ASan/UBSan
+smoke runs. Together the source files shrink by 160 lines. `rawtri` is now the
+canonical unchanged screen-space hardware bring-up demo; `triangle` remains a
+compatibility build of the same source.
+
 Rewrite `demos/cube.c` and `demos/textured_cube.c` on the pipeline
 (begin/end, matrices, one directional light). Demos shrink dramatically;
 this is the proof the pipeline is sufficient. Keep the old screen-space

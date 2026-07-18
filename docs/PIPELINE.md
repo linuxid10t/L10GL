@@ -155,6 +155,21 @@ This behavior applies only to immediate-mode model-space submission. The
 screen-space `l10gl_draw_textured_triangle()` API remains unchanged and still
 accepts the caller's explicit W values.
 
+## Demo integration
+
+X6 ports `cube` and `textured_cube` to this pipeline. They retain only scene
+data, procedural texture generation, camera/light setup, and animation state;
+all former rotation, projection, lighting, culling, and reciprocal-depth math
+has moved into X1-X5. The old +Z-into-screen camera convention is represented
+by a MODELVIEW Z reflection plus reversed input winding, preserving CCW front
+faces under the OpenGL eye convention.
+
+At 640x480 RGB565, each port's first swrast PPM is byte-identical to its legacy
+screen-space baseline. `rawtri` preserves the direct screen-space Gouraud
+triangle path for backend bring-up, and `triangle` remains a compatibility
+executable built from that source. ViRGE confirmation of the new demo paths is
+pending.
+
 ## Validation
 
 `make check` runs `test-pipeline` against a capture backend. It verifies exact
