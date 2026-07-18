@@ -835,6 +835,20 @@ encoding. This path is structurally complete but remains untested on a real
 Mystique with `matroxfb`.
 
 ### P6. Native ViRGE mode setting (no fb-driver dependency)
+
+**P6a implemented 2026-07-18; hardware-inert foundation complete.**
+`src/backends/virge/virge_mode.c` defines the six fixed 640x480, 800x600,
+and 1024x768 modes at 60/75 Hz, validates that each timing fits the verified
+16bpp horizontal-x2 ViRGE CRTC representation, and computes SR12/SR13 DCLK
+parameters from the databook formula and documented PLL/VCO limits. The first
+hardware pass remains restricted to the conservative 60 Hz entries. The new
+`test-virge-mode` checks every timing, sync polarity, invalid-mode rejection,
+all six clocks' representability, and exact PLL encodings for the three 60 Hz
+clocks. Nothing calls this module from `virge_init` yet, so this commit adds no
+register writes and cannot change the proven takeover path. P6b is the pure
+CRTC encoder plus complete register snapshot/restore description; the opt-in
+writer follows only after those bytes are covered by tests.
+
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same
 "direct interaction with the hardware" philosophy as the rest of the

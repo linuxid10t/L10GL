@@ -40,6 +40,14 @@ project uses, by **absolute PDF page**:
 
 Key facts verified against this document (2026-07):
 
+- **DCLK PLL programming** (section 9.1-9.2, PDF pp.65-67):
+  `fout = (M+2) * fref / ((N+2) * 2^R)`, with programmed M=1..127,
+  N=1..31, R=0..3, and the pre-divider VCO constrained to 135-270 MHz.
+  The normal XIN crystal is 14.318 MHz. N and R occupy SR12 bits 4-0 and
+  6-5; M occupies SR13 bits 6-0. After SR12/SR13 are written and 3C2 bits
+  3-2 select the programmable clock, toggling SR15 bit 5 0->1->0 loads the
+  new clock immediately. P6a implements and unit-tests the calculation only;
+  the load sequence is intentionally deferred to the opt-in hardware step.
 - **2D line command code is 0011b** in CMD_SET bits 30-27 (example on
   PDF p. 124 writes `0001 100S...` to MMA900), with DE (bit 5) set and
   mono pattern (bit 8) *not* set. Kick register with autoexecute is

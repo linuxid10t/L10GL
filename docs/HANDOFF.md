@@ -112,9 +112,22 @@ console raster is copied aside and restored together with the exact three
 start-address registers at cleanup. Insufficient VRAM and the no-fbdev fallback
 remain safely single-buffered. `test-mga1064` checks 4MB 800x600x16 placement,
 nonzero live-front exclusion, 32bpp capacity failure, and exact 8-byte-unit
-register encoding. The full normal suite and all six automated binaries under
+register encoding. The full normal suite and all seven automated binaries under
 ASan/UBSan pass (LeakSanitizer disabled because the command supervisor uses
 ptrace). Real Mystique/`matroxfb` validation is still required.
+
+**Phase 3 P6a implemented 2026-07-18; no hardware writes yet.**
+`src/backends/virge/virge_mode.c` is a pure module containing the fixed VESA
+640x480, 800x600, and 1024x768 timing table at 60/75 Hz plus the DB019-B
+SR12/SR13 DCLK solver. It rejects malformed or unrepresentable timings,
+enforces the documented M/N/R and 135-270 MHz VCO limits, and requires the
+generated clock to be within the databook's 0.5 percent tolerance. The
+hardware-independent `test-virge-mode` covers all six entries and exact 60 Hz
+PLL bytes. It is linked into the library but deliberately not called by
+`virge_init`, so `L10GL_MODESET` is not active and the verified native takeover
+has not changed. Next: encode the standard/extended CRTC bytes and a complete
+save/restore set as another hardware-inert, unit-tested slice before adding the
+opt-in register writer.
 
 ## Test setup (fixed, do not re-derive)
 
