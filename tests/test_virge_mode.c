@@ -206,12 +206,47 @@ static void test_crtc_image(void)
            "reject null CRTC image");
 }
 
+static void test_first_gate_image(void)
+{
+    const struct virge_mode *mode = virge_mode_find(800, 600, 60);
+    struct virge_crtc_image image;
+
+    EXPECT(virge_mode_encode_16bpp(mode, 1600, 4u * 1024u * 1024u,
+                                   &image) == 0,
+           "encode first-gate source image");
+    virge_mode_limit_first_gate(&image);
+
+    EXPECT(image.mask[0x00] && image.mask[0x05] &&
+           image.mask[0x0c] && image.mask[0x0d] && image.mask[0x13] &&
+           image.mask[0x31] && image.mask[0x3b] && image.mask[0x43] &&
+           image.mask[0x50] && image.mask[0x51] && image.mask[0x5d] &&
+           image.mask[0x67] && image.mask[0x69],
+           "first gate retains proven takeover register subset");
+    EXPECT(image.mask[0x11] == 0x80,
+           "first gate owns only the CR00-07 lock bit in CR11");
+    EXPECT(image.mask[0x03] == 0x1f && image.mask[0x05] == 0x9f,
+           "first gate preserves live horizontal skew bits");
+    EXPECT(!image.mask[0x06] && !image.mask[0x07] &&
+           !image.mask[0x08] && !image.mask[0x09] &&
+           !image.mask[0x10] && !image.mask[0x12] &&
+           !image.mask[0x14] && !image.mask[0x15] &&
+           !image.mask[0x16] && !image.mask[0x17] &&
+           !image.mask[0x18] && !image.mask[0x35] && !image.mask[0x5e],
+           "first gate preserves live vertical/addressing timing state");
+    EXPECT(image.misc_mask == 0x0f,
+           "first gate changes DCLK select without changing sync polarity");
+    EXPECT(image.seq_mask[0x12] && image.seq_mask[0x13] &&
+           image.seq_mask[0x15],
+           "first gate retains programmable DCLK load sequence");
+}
+
 int main(void)
 {
     test_fixed_modes();
     test_mode_validation();
     test_pll();
     test_crtc_image();
+    test_first_gate_image();
     if (failed)
         return 1;
     printf("test-virge-mode: PASS (fixed modes, DCLK PLL, CRTC/save image)\n");

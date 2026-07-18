@@ -860,7 +860,8 @@ pitch. The FIFO-fetch policy preserves the target BIOS mode's verified 3 us
 refill interval at each dot clock. P6c is the opt-in save/apply/restore writer;
 its first 800x600@60 clock-isolation step requires hardware sign-off.
 
-**P6c first silicon gate implemented 2026-07-18; hardware sign-off pending.**
+**P6c first silicon gate implemented 2026-07-18; first hardware run exposed
+a vertical-displacement regression, corrective gate pending re-test.**
 `L10GL_MODESET=native` is now an explicit opt-in on the ViRGE no-fbdev path,
 but is deliberately restricted to 800x600@60 for its first run. That is the
 target machine's already-proven raster and reproduces P6b's verified takeover
@@ -873,6 +874,17 @@ bytes at cleanup. Default operation remains the hardware-verified live-raster
 takeover. After the 800x600 run and restore are confirmed, enable 640x480@60
 as the first actual resolution change; keep 75 Hz and 1024x768 gated (the
 latter also exceeds a 4MB card's double-buffer+Z budget).
+
+The first P6c run stayed synchronized but showed roughly 100-115 black lines
+at the top; after cleanup the simple-framebuffer contents were displaced and
+white at the bottom. This gate had rewritten the complete vertical VGA timing
+set even though the intended experiment was only the already-live 800x600
+raster plus a new PLL load. The corrective gate now retains the live vertical,
+panning, and addressing-control registers and writes only the exact
+horizontal/depth/pitch/start subset already proven by `virge_scanout_takeover`,
+plus SR12/SR13/SR15 and the programmable-DCLK select. Cleanup repeats the saved
+display-start bytes after restoring the old PLL and waits one retrace before
+unblanking, ensuring the console start is latched in its own clock domain.
 
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same

@@ -76,4 +76,9 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
                             uint32_t vram_size,
                             struct virge_crtc_image *image);
 
+/* Restrict a complete 800x600 image to P6's first silicon gate: retain the
+ * live vertical raster and touch only the register subset already proven by
+ * the pre-P6 32->15bpp takeover, plus the new DCLK controls. */
+void virge_mode_limit_first_gate(struct virge_crtc_image *image);
+
 #endif

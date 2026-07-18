@@ -139,8 +139,8 @@ sizes the linear window from detected VRAM. The CR3B policy holds the verified
 800x600 BIOS refill time at 3 us rather than applying the databook's inadequate
 "typically CR00-5" suggestion. That checkpoint was also hardware-inert.
 
-**Phase 3 P6c first hardware gate implemented 2026-07-18; silicon validation
-pending.** `L10GL_MODESET=native` now selects a complete native save/apply/
+**Phase 3 P6c first hardware gate implemented 2026-07-18; corrective hardware
+re-test pending.** `L10GL_MODESET=native` now selects a complete native save/apply/
 restore transaction, but only for 800x600@60. The restriction is intentional:
 the target already displays that raster correctly, so the first run isolates
 the new programmable DCLK load (40 MHz target, computed 40.025 MHz,
@@ -153,6 +153,18 @@ Misc Output, and DAC bytes in lock-safe order. No console-pixel fix is claimed;
 the known incoherent CPU aperture remains deferred, and launcher rebind is
 still responsible for redrawing fbcon. Default no-environment behavior is
 unchanged. Required test over SSH:
+
+The first run remained synchronized but displaced the live image vertically:
+about 100-115 black lines at the top, followed by a shifted/white-bottom
+simplefb image after restore. Unlike the proven takeover, P6c had needlessly
+rewritten every vertical VGA register during an experiment intended to isolate
+the DCLK. The re-test gate preserves all live vertical/pan/addressing-control
+bytes and applies only the takeover-proven horizontal/depth/pitch/start set
+plus the documented PLL sequence. Restore now repeats CR0C/CR0D/CR69 after the
+old PLL is loaded, waits for that start address to latch at retrace, and only
+then unblanks. Expanded pre/apply/restore logs include the vertical blank and
+display-start bytes needed to distinguish register state from expected VRAM
+content damage (native rendering overwrites the old simplefb pixels).
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \

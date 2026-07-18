@@ -348,3 +348,40 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
 
     return 0;
 }
+
+void virge_mode_limit_first_gate(struct virge_crtc_image *image)
+{
+    static const uint8_t proven_crtc[] = {
+        /* Horizontal timing set used by virge_scanout_takeover. */
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+        /* CR11 bit 7 is needed only to unlock/relock CR00-CR05. */
+        0x11,
+        /* Display start, pitch, FIFO, depth, and extended horizontal bits. */
+        0x0c, 0x0d, 0x13, 0x31, 0x34, 0x3b, 0x43, 0x50, 0x51,
+        0x5d, 0x67, 0x69,
+    };
+    uint8_t keep[VIRGE_CRTC_IMAGE_SIZE] = {0};
+    unsigned i;
+
+    if (!image)
+        return;
+    for (i = 0; i < sizeof(proven_crtc) / sizeof(proven_crtc[0]); i++)
+        keep[proven_crtc[i]] = 1;
+    for (i = 0; i < VIRGE_CRTC_IMAGE_SIZE; i++) {
+        if (!keep[i])
+            image->mask[i] = 0;
+    }
+
+    /* Do not change the live raster's sync polarities during the clock-only
+     * gate. Bits 3-2 select the programmable DCLK; bits 1-0 retain RAM and
+     * color-CRTC access. The complete encoder still owns polarity for the
+     * later true resolution-change gate. */
+    image->misc_mask &= 0x0fu;
+
+    /* Preserve CR11's interrupt/retrace bits; only its timing lock is part of
+     * this transaction. CR35 is deliberately absent because the proven
+     * takeover writes this subset without disturbing S3's timing locks. */
+    image->mask[0x03] = 0x1f; /* preserve live display skew */
+    image->mask[0x05] = 0x9f; /* preserve live horizontal-sync skew */
+    image->mask[0x11] = 0x80;
+}

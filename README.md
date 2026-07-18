@@ -130,7 +130,9 @@ until L10GL takes over. Normal exits and signals restore ownership, but
 the launcher on a GPU serving an active graphical desktop.
 
 The first opt-in P6 native-modeset hardware gate is restricted to the already
-proven 800x600@60 raster. Run it over SSH:
+proven 800x600@60 raster. Its corrective re-test preserves the live vertical
+timing and changes only the proven scanout subset plus the programmable DCLK.
+Run it over SSH:
 
 ```sh
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
