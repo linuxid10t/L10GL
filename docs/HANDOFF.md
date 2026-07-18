@@ -194,6 +194,15 @@ selection. The corrected gate now uses that path, snapshots SR15.1, and still
 restores the old SR12/SR13/SR15 state because selecting a fixed clock may
 replace the PLL parameter bytes implicitly.
 
+That corrected run also remained out of range. Readback was `Misc=e3` (clock
+select bits `00`, with saved bit 5 preserved) and `SR15=03`, proving the fixed
+clock path was selected. The pending diagnostic therefore measures the
+generated signal rather than revising another inferred register: DB019-B
+Input Status 1 bit 0 is sampled across 128 horizontal retraces and bit 3 across
+three vertical retraces before and after the mode transaction. The same line
+logs SR01 and CR43, the documented dot-clock divide and horizontal-counter
+double controls. Use those H/V measurements to choose the next correction.
+
 Run over SSH from a clean console baseline:
 
 ```

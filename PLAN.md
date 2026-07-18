@@ -926,6 +926,16 @@ built-in clock and sets SR15.1 while selecting it, as the same section
 requires. SR12/SR13/SR15 remain fully saved and restored because fixed-clock
 selection can update the PLL parameter registers implicitly.
 
+The corrected fixed-clock run still produced an out-of-range signal. Its
+readback proves clock select `00` (`Misc=e3`, with unrelated firmware bit 5
+preserved) and DFRQ enable (`SR15=03`) were active, so further timing changes
+must not be guessed from PLL state. The next diagnostic reads DB019-B Input
+Status 1 directly: bit 0 measures 128 horizontal-retrace periods and bit 3
+measures three vertical-retrace periods, both before and after the modeset.
+It also reports SR01 and CR43, the documented dot-clock divide and horizontal
+counter-double controls. Those measured rates will identify the remaining
+counter-scaling error.
+
 75Hz and 1024x768 remain locked. Hardware test over SSH:
 
 ```
