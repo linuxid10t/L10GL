@@ -91,7 +91,9 @@ static void test_fixed_modes(void)
                vtotal + 2u == mode->vtotal &&
                vde + 1u == mode->height &&
                vrs == mode->vsync_start && vbs + 1u == mode->vdisplay &&
-               image.value[0x16] == (uint8_t)(mode->vtotal - 1u) &&
+               image.value[0x16] ==
+                   (uint8_t)(((vbs - 1u) +
+                              (mode->vtotal - mode->vdisplay)) & 0xffu) &&
                line_compare == 0x3ffu &&
                lsw * 8u == mode->width * 2u,
                "CRTC image decodes to requested complete timing and pitch");
@@ -228,7 +230,7 @@ static void test_crtc_image(void)
         static const uint8_t expected_standard[25] = {
             0xc3, 0x9f, 0xa0, 0x04, 0xa4, 0x1c, 0x0b, 0x3e,
             0x00, 0x40, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0xea, 0xac, 0xdf, 0xa0, 0x00, 0xdf, 0x0c, 0xe3,
+            0xea, 0xac, 0xdf, 0xa0, 0x00, 0xdf, 0x0b, 0xe3,
             0xff,
         };
 
@@ -254,7 +256,7 @@ static void test_crtc_image(void)
         static const uint8_t expected_standard[25] = {
             0xcd, 0x9f, 0xa0, 0x0e, 0xa4, 0x14, 0xf2, 0x1f,
             0x00, 0x40, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0xe1, 0xa4, 0xdf, 0xa0, 0x00, 0xdf, 0xf3, 0xe3,
+            0xe1, 0xa4, 0xdf, 0xa0, 0x00, 0xdf, 0xf2, 0xe3,
             0xff,
         };
 
@@ -265,6 +267,8 @@ static void test_crtc_image(void)
     EXPECT(image.value[0x3b] == 0xba && image.fifo_fetch == 186 &&
            image.value[0x5d] == 0x00 && image.value[0x5e] == 0x00,
            "640x480@75 FIFO and extended overflow bytes");
+    EXPECT(image.value[0x15] == 0xdf && image.value[0x16] == 0xf2,
+           "640x480@75 vertical blank ends before the 500-line wrap");
     EXPECT(image.value[0x13] == 0xa0 && image.misc_value == 0xcf &&
            !image.builtin_dclk_25175 && image.pll.sr12 == 0x63 &&
            image.pll.sr13 == 0x56 && image.pll.actual_khz == 31500 &&

@@ -246,7 +246,13 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     vt = mode->vtotal - 2u;
     vd = mode->vdisplay - 1u;
     vbs = vd;
-    vbe = mode->vtotal - 1u;
+    /* CR16 is not an absolute full-width end position. DB019-B CR15/CR16
+     * (PDF p.159) says to add the desired blank width to (CR15 - 1) and
+     * keep the low eight bits. CR15 contains vdisplay-1, so a blank lasting
+     * through the end of the frame encodes vtotal-2 -- the same count as
+     * CR06. Using vtotal-1 can name a count beyond the raster; after wrap,
+     * blanking then remains active until that low byte recurs mid-frame. */
+    vbe = mode->vtotal - 2u;
     vss = mode->vsync_start;
     vse = mode->vsync_end;
 

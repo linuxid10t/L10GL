@@ -979,6 +979,18 @@ already proven by P6c. Unit tests pin all 25 standard CRTC bytes, `CR5D=00`,
 the 3us FIFO-fetch value, sync polarity, and PLL bytes. The gate still rejects
 800x600@75 and both 1024x768 entries.
 
+The first P6e silicon run synchronized and restored the console correctly, but
+the top half of the active image was black and only the lower half of the cube
+was visible. DB019-B's CR15/CR16 definition explains the almost exact
+half-frame boundary: CR16 is the low eight bits of the blank width plus
+`(CR15 - 1)`, not an absolute `vtotal - 1` endpoint. The encoder programmed
+`CR16=f3` for a 500-line raster whose last vertical counter value is `0x1f2`.
+Because `0xf3` was never reached before wrap, blanking remained active until
+that low byte recurred at line 243. The corrected image uses `CR16=f2`
+(`vtotal - 2`), and the general test now derives CR16 from the documented
+blank-width formula. This also corrects 640x480@60 from `0c` to the canonical
+`0b`; both refreshes require a regression check on silicon.
+
 P6d's signed-off 60Hz hardware test over SSH:
 
 ```
@@ -998,7 +1010,8 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native L10GL_REFRESH=75 \
 
 Expected diagnostic sync is approximately 37.50kHz / 75.00Hz. Acceptance
 requires a visible stable cube at 640x480@75 and recovery of the original
-800x600 simplefb console after Ctrl-C. Keep the other 75Hz mode and all
+800x600 simplefb console after Ctrl-C. Corrected readback must show
+`CR15=df CR16=f2`. Keep the other 75Hz mode and all
 1024x768 modes locked until this gate is confirmed.
 
 The end-state for the primary card: set the mode by programming the chip

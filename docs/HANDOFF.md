@@ -241,6 +241,16 @@ are unchanged from P6d, while the fixed table supplies 75Hz timings and a
 `CR5D=00`, negative sync polarity, and PLL bytes. 800x600@75 and both
 1024x768 modes remain rejected.
 
+The first run accepted the signal and cleanup restored the console, but the
+top half of the screen was black and only the lower half of the cube appeared.
+This is the data-book CR16 wrap failure, not page-flip timing: DB019-B CR15/16
+(PDF p.159) defines End Vertical Blank as blank width plus `(CR15 - 1)`, low
+eight bits. The encoder used `vtotal - 1`, producing `f3` even though the
+500-line raster's final counter value is `0x1f2`; blanking therefore survived
+the frame wrap and cleared only when low byte `f3` recurred near line 243.
+The corrected 75Hz image uses `CR16=f2`. The same general correction changes
+640x480@60 from `0c` to `0b`, so recheck that signed-off mode after P6e passes.
+
 Run over SSH from a clean console baseline:
 
 ```
@@ -260,7 +270,8 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native L10GL_REFRESH=75 \
 ```
 
 Expected measured sync is about 37.50kHz / 75.00Hz. Confirm a stable visible
-cube and recovery of the original 800x600 simplefb console after Ctrl-C.
+cube, readback `CR15=df CR16=f2`, and recovery of the original 800x600
+simplefb console after Ctrl-C.
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
