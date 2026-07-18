@@ -105,7 +105,7 @@ backend calls. Strip winding alternates correctly; fan origin is fixed;
 texture binding selects textured dispatch; CCW culling happens in NDC before
 the top-left framebuffer Y conversion. `test-pipeline` uses a capture backend
 to verify exact calls and vertices. Existing demos are not ported yet (X6),
-normals are reserved for X4, and texture W stays 1 until X5.
+and texture W stays 1 until X5.
 
 Phase 2 X3 is complete as of 2026-07-17. Immediate-mode triangles are clipped
 in homogeneous space against `Z + W >= 0` before perspective division and
@@ -116,8 +116,19 @@ rejected before they reach the ViRGE's 11-bit count fields. `test-pipeline`
 covers one/two/all-outside cases, analytic intersections and interpolation,
 the exact near boundary, shared fan vertices, conservative far/line rejection,
 and both sides of the scan-height limit. X/Y still use the hardware clip
-rectangle; far-plane and line clipping remain future work. X4 lighting and X5
-perspective texture W are the next Phase 2 tasks and can proceed independently.
+rectangle; far-plane and line clipping remain future work.
+
+Phase 2 X4 is complete as of 2026-07-17. The immediate-mode frontend now has
+opt-in per-vertex material lighting with one eye-space directional light plus
+ambient. The API is `l10gl_enable_lighting`, `l10gl_light_dir`,
+`l10gl_light_color`, `l10gl_light_ambient`, and `l10gl_material`. Normals use
+the normalized inverse-transpose MODELVIEW matrix, including non-uniform scale
+and reflections; singular normal matrices fall back to ambient only. Lit RGB
+and material alpha are clamped and captured before X3 clipping. `test-pipeline`
+covers full diffuse, ambient-only, invalid directions, normalization, clamping,
+per-vertex material changes, non-uniform/reflected/singular transforms, and
+disabled-lighting compatibility. Existing demos and all backend code remain
+unchanged; X5 perspective texture W is now the next Phase 2 task.
 
 ## Push workflow (non-negotiable — David has corrected agents on this repeatedly)
 

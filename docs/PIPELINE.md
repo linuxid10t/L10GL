@@ -55,14 +55,47 @@ state. Every `l10gl_vertex3f()` captures a copy, so later attribute changes do
 not affect earlier vertices. Defaults are opaque white, normal `(0,0,1)`, and
 texture coordinate `(0,0)`.
 
-Normals are retained in the captured frontend vertex for X4 lighting but are
-not evaluated yet. Color, alpha, normal, and UV are interpolated when X3
-creates near-plane intersection vertices.
+When lighting is disabled (the default), current color and alpha are copied
+unchanged. When lighting is enabled, the current normal and material are
+evaluated as each vertex is submitted, so later state changes do not affect
+earlier vertices. Color, alpha, normal, and UV are interpolated when X3 creates
+near-plane intersection vertices.
 
 Binding a non-NULL texture with `l10gl_bind_texture()` selects textured
 triangle dispatch. Binding NULL returns to Gouraud triangle dispatch. A backend
 without a textured draw hook still receives the frontend's established plain
 triangle fallback.
+
+## Lighting
+
+X4 provides one infinite directional light plus ambient illumination. It is
+frontend math and requires no backend capability:
+
+```c
+l10gl_enable_lighting(ctx, 1);
+l10gl_light_dir(ctx, 0.5f, 0.7f, -0.5f); /* eye-space ray direction */
+l10gl_light_color(ctx, 0.8f, 0.8f, 0.8f);
+l10gl_light_ambient(ctx, 0.2f, 0.2f, 0.2f);
+l10gl_material(ctx, 1.0f, 0.0f, 0.0f, 1.0f);
+l10gl_normal3f(ctx, 0.0f, 0.0f, 1.0f);
+```
+
+`l10gl_light_dir()` takes the eye-space direction in which light rays travel,
+normalizes it, and returns `-EINVAL` for a zero or non-finite vector without
+changing state. For each vertex the pipeline computes:
+
+```text
+N_eye = normalize(inverse_transpose(modelview_3x3) * N_object)
+diffuse = max(0, dot(N_eye, -light_direction))
+rgb = clamp(material_rgb * (ambient_rgb + light_rgb * diffuse), 0, 1)
+alpha = clamp(material_alpha, 0, 1)
+```
+
+Inverse-transpose handling keeps lighting correct under non-uniform scale and
+reflection. A singular MODELVIEW or unusable normal deterministically receives
+ambient only. While lighting is enabled, material replaces current color;
+material and lighting changes are captured at each vertex. Multiple lights,
+specular highlights, and positional lights are outside this subset.
 
 ## Transform and culling
 
@@ -117,5 +150,7 @@ supply explicit W.
 screen coordinates and attributes, MODELVIEW connection, triangle grouping,
 strip alternation, fan origin, line pairing, incomplete primitives, bound
 texture selection, front/back culling, near-plane split/interpolation and
-boundary cases, conservative far/line rejection, and the 2047-scanline guard.
-The separate swrast suite validates the rasterizer receiving those calls.
+boundary cases, conservative far/line rejection, the 2047-scanline guard,
+directional/ambient lighting, inverse-transpose normals, material capture,
+clamping, and disabled-lighting compatibility. The separate swrast suite
+validates the rasterizer receiving those calls.

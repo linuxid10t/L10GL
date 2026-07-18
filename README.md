@@ -31,9 +31,10 @@ without either card.
 The frontend now also has OpenGL-convention MODELVIEW and PROJECTION matrix
 stacks plus an immediate-mode model-space geometry path. It captures current
 color/normal/texture attributes, assembles triangles, strips, fans, and lines,
-transforms them, performs CCW face culling, and emits the established
-screen-space backend primitives. The direct `l10gl_draw_triangle` API remains
-available and unchanged.
+transforms them, applies opt-in directional plus ambient material lighting,
+clips triangles at the homogeneous near plane, performs CCW face culling, and
+emits the established screen-space backend primitives. The direct
+`l10gl_draw_triangle` API remains available and unchanged.
 
 | Backend | Hardware | Status |
 |---|---|---|

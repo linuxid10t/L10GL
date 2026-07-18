@@ -556,12 +556,13 @@ other vintage cards).
 
 ## Phase 2 — Frontend geometry pipeline
 
-**Status (2026-07-17): X1 through X3 complete; X4 and X5 are next.** Matrix
+**Status (2026-07-17): X1 through X4 complete; X5 is next.** Matrix
 stacks and viewport math live in `src/l10gl_xform.c`; current-attribute
 capture, model-space transformation, streaming primitive assembly,
-homogeneous near clipping, texture dispatch, and post-projection culling live
-in `src/l10gl_pipeline.c`. `test-xform` and `test-pipeline` cover both layers.
-Existing screen-space drawing remains unchanged.
+eye-space directional lighting, homogeneous near clipping, texture dispatch,
+and post-projection culling live in `src/l10gl_pipeline.c`. `test-xform` and
+`test-pipeline` cover both layers. Existing screen-space drawing remains
+unchanged.
 
 Move the 3D math out of the demos and into the library, so applications
 supply model-space geometry and the library handles transform → light →
@@ -597,8 +598,8 @@ and `texcoord2f` stream triangles, alternating-winding strips, fixed-origin
 fans, independent lines, and line strips through X1 into existing backend draw
 calls without allocation. Binding a texture selects textured triangle dispatch;
 binding NULL selects Gouraud dispatch. CCW front/back culling is computed in
-NDC before the framebuffer Y flip. Normals are captured for X4 and emitted
-texture W remains affine (`1.0`) until X5.
+NDC before the framebuffer Y flip. Normals are captured for X4 lighting and
+emitted texture W remains affine (`1.0`) until X5.
 
 `l10gl_begin(prim)` / `l10gl_vertex3f` / `l10gl_color4f` / `l10gl_normal3f`
 / `l10gl_texcoord2f` / `l10gl_end()`. Assemble TRIANGLES, TRIANGLE_STRIP,
@@ -627,6 +628,17 @@ scan counts to the 11-bit fields (`virge.h:296`) — reject or clip
 triangles taller than 2047 lines.
 
 ### X4. Lighting
+
+**Complete 2026-07-17.** Lighting is opt-in and computes one eye-space
+directional diffuse term plus configurable ambient light for every submitted
+vertex. `l10gl_light_dir` validates and normalizes a light-ray direction;
+`l10gl_light_color`, `l10gl_light_ambient`, and `l10gl_material` configure the
+RGB terms and material alpha. Normals use normalized inverse-transpose
+MODELVIEW, including non-uniform and reflected transforms; singular matrices
+safely produce ambient only. Lit channels are clamped to `[0,1]` and captured
+before X3 clipping, which then interpolates them normally. Disabled lighting
+preserves the established current-color path exactly.
+
 Fixed-function subset: one infinite directional light + ambient
 (`l10gl_light_dir`, `l10gl_light_color`, `l10gl_material`), evaluated
 per-vertex from `l10gl_normal3f` in eye space, exactly replacing the math
