@@ -2,7 +2,7 @@
 #
 # `make` builds the frontend, every hardware backend, all demos, and the
 # retained ViRGE diagnostics. Frontend demos choose a backend at runtime;
-# set L10GL_BACKEND=virge or L10GL_BACKEND=mga1064 when running to force one.
+# set L10GL_BACKEND=virge, mga1064, or swrast when running to force one.
 
 CC       = gcc
 AR       = ar
@@ -13,6 +13,7 @@ LIBRARY = libl10gl.a
 LIB_SRCS = \
 	src/l10gl.c \
 	src/pci_scan.c \
+	src/backends/swrast/swrast.c \
 	src/backends/virge/virge.c \
 	src/backends/virge/l10gl_virge.c \
 	src/backends/mga1064/mga1064.c \

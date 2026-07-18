@@ -21,6 +21,7 @@
 static const struct l10gl_backend *const l10gl_backends[] = {
     &virge_backend,
     &mga1064_backend,
+    &swrast_backend,
 };
 
 const struct l10gl_backend *l10gl_autodetect(void)
