@@ -896,6 +896,7 @@ static void swrast_swap_buffers(struct l10gl_ctx *ctx)
 
 const struct l10gl_backend swrast_backend = {
     .name                   = "swrast",
+    .fbdev_env              = "L10GL_SWRAST_FB",
     .probe                  = swrast_probe,
     .init                   = swrast_init,
     .cleanup                = swrast_cleanup,

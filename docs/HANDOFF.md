@@ -55,7 +55,8 @@ note; the diagnostic probes (VRAM dump, engine-fill marker) were removed.
 See #5 for the full decode.
 
 **Phase 3 P1 implemented 2026-07-18; native ViRGE regression verified.** The
-frontend context now exposes actual byte stride plus fbdev-style packed channel fields,
+frontend context now exposes actual byte stride plus fbdev-style packed channel
+fields,
 and rejects backends that return an impossible mode. `src/fbdev.c` centralizes
 GET/PUT/re-read negotiation. ViRGE asks fbdev for the requested geometry and
 its mandatory 15-bit RGB555 layout; MGA-1064 programs real padded pitch;
@@ -64,8 +65,17 @@ request and live mode plus an example `fbset` command. `make check`, including
 the new `test-mode`, passes. The primary `david-ta970` path has no `/dev/fb0`,
 so its immediate hardware check was a regression of native takeover. David
 reported it works with no regressions after P1. True fbdev mode-switch
-acceptance remains to be run on a boot with `s3fb` or `matroxfb`. P2 is still
-required for VT `KD_GRAPHICS` ownership and restoration of a changed mode.
+acceptance remains to be run on a boot with `s3fb` or `matroxfb`.
+
+**Phase 3 P2 implemented 2026-07-18; fbdev/VT hardware sign-off pending.**
+`src/console.c` snapshots the original fbdev mode before P1 backend init, puts
+the active VT into `KD_GRAPHICS` only when it owns the target framebuffer, and
+restores the mode before returning that VT to its exact prior KD state.
+Backend-init failures unwind ownership; offscreen swrast and no-fbdev native
+takeover remain no-ops. `test-console` covers lifecycle and failure ordering.
+On a machine with `/dev/fb0`, validate over SSH with swrast in the live mode;
+the local display must have no cursor/printk scribble, and Ctrl-C must log
+`restored fbdev mode and console ownership` before returning a usable console.
 
 ## Test setup (fixed, do not re-derive)
 

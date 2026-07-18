@@ -182,6 +182,9 @@ int main(int argc, char **argv)
     printf("L10GL Textured Cube Demo\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
+
     struct l10gl_ctx ctx;
     if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
@@ -203,9 +206,6 @@ int main(int argc, char **argv)
         width = ctx.width;
         height = ctx.height;
     }
-
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
 
     /* Generate textures (only used if backend supports them) */
     struct l10gl_texture textures[6];

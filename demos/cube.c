@@ -102,6 +102,11 @@ int main(int argc, char **argv)
     printf("L10GL Gouraud Cube Demo\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
+    /* Install before create: P2 may take VT ownership during initialization,
+     * so SIGINT/SIGTERM must already be converted into orderly cleanup. */
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
+
     struct l10gl_ctx ctx;
     if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
@@ -118,9 +123,6 @@ int main(int argc, char **argv)
         width = ctx.width;
         height = ctx.height;
     }
-
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
 
     /* L10GL_STATIC=1: render a single frame and idle, so it can be
      * photographed without tearing. Used to tell whether the animated

@@ -198,6 +198,12 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
     struct l10gl_ctx ctx;
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = sighandler;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     const struct l10gl_backend *backend = &virge_backend;
     if (!(backend->caps & L10GL_CAP_TEXTURE)) {
@@ -209,9 +215,6 @@ int main(int argc, char **argv)
         return 1;
     }
     int W = ctx.width, H = ctx.height;
-
-    struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = sighandler;
-    sigaction(SIGINT, &sa, NULL); sigaction(SIGTERM, &sa, NULL);
 
     struct l10gl_texture tex;
     uint16_t texmem[TEX * TEX];

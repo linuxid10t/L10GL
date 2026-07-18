@@ -182,6 +182,12 @@ struct l10gl_ctx;  /* forward decl */
 struct l10gl_backend {
     const char *name;     /* e.g. "mga1064", "virge" */
 
+    /* Optional fbdev target for shared P2 console ownership. fbdev_env is
+     * checked first; an unset/empty value falls back to fbdev_path. Backends
+     * with neither field are offscreen/non-console and never touch a VT. */
+    const char *fbdev_path;
+    const char *fbdev_env;
+
     /* --- Lifecycle --- */
     int  (*probe)(void);  /* >0 if this backend's hardware is present */
     int  (*init)(struct l10gl_ctx *ctx, int width, int height, int bpp);
@@ -257,6 +263,7 @@ struct l10gl_backend {
 struct l10gl_ctx {
     const struct l10gl_backend *backend;  /* const backend vtable */
     void *backend_data;                   /* backend-private state (e.g. mga1064_ctx) */
+    void *console_data;                   /* shared console.c ownership state */
 
     /* Actual screen geometry selected/adopted by the backend. The create
      * arguments are requests; these fields are authoritative after init. */

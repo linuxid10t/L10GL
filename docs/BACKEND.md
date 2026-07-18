@@ -39,6 +39,14 @@ Add a `const struct l10gl_backend` vtable with a stable lowercase `name`.
 - `cleanup()` waits for outstanding work, restores owned display state, unmaps
   resources, closes descriptors, and frees private state.
 
+An fbdev-backed vtable declares either `fbdev_path` (for example `/dev/fb0`)
+or `fbdev_env` when the path is selected at runtime. The frontend uses that
+declaration before `init()` to save the original mode and move the active
+owning VT to `KD_GRAPHICS`. Backend cleanup runs first; the frontend then
+restores the saved fbdev mode and the VT's prior KD mode. Backends must not
+duplicate that generic ownership work. Leave both fields NULL for offscreen or
+non-console backends.
+
 PCI backends use `l10gl_pci_find()` from `src/pci_scan.h` for sysfs discovery.
 Put all supported device IDs in one backend-owned array and share one finder
 between `probe()` and `init()`. Do not add another PCI directory scanner.

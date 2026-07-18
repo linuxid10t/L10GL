@@ -582,6 +582,7 @@ static void virge_be_swap_buffers(struct l10gl_ctx *ctx)
 
 const struct l10gl_backend virge_backend = {
     .name                 = "virge",
+    .fbdev_path           = "/dev/fb0",
     .probe                = virge_probe,
     .init                 = virge_be_init,
     .cleanup              = virge_be_cleanup,

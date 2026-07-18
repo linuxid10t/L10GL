@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#include "console.h"
 #include "l10gl.h"
 #include "l10gl_pipeline.h"
 #include "l10gl_xform.h"
@@ -97,6 +98,8 @@ int l10gl_create(struct l10gl_ctx *ctx,
                  const struct l10gl_backend *backend,
                  int width, int height, int bpp)
 {
+    int ret;
+
     if (!ctx || !backend)
         return -EINVAL;
 
@@ -121,10 +124,19 @@ int l10gl_create(struct l10gl_ctx *ctx,
     ctx->blend_dfactor = L10GL_ONE_MINUS_SRC_ALPHA;
     ctx->current_texture = NULL;
 
+    /* P2 must snapshot the original fbdev mode before P1 backend init has an
+     * opportunity to negotiate a different one. Offscreen and native-only
+     * paths do not declare an available fbdev target and remain untouched. */
+    ret = l10gl_console_acquire(ctx, backend);
+    if (ret)
+        return ret;
+
     if (backend->init) {
-        int ret = backend->init(ctx, width, height, bpp);
-        if (ret)
+        ret = backend->init(ctx, width, height, bpp);
+        if (ret) {
+            l10gl_console_release(ctx);
             return ret;
+        }
     }
 
     if (!l10gl_mode_valid(ctx)) {
@@ -135,6 +147,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
                 ctx->pixel_format.bits_per_pixel, ctx->stride);
         if (backend->cleanup)
             backend->cleanup(ctx);
+        l10gl_console_release(ctx);
         return -EINVAL;
     }
 
@@ -170,6 +183,7 @@ void l10gl_destroy(struct l10gl_ctx *ctx)
 {
     if (ctx->backend && ctx->backend->cleanup)
         ctx->backend->cleanup(ctx);
+    l10gl_console_release(ctx);
 }
 
 /* ========================================================================

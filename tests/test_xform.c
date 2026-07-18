@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "l10gl.h"
@@ -237,6 +238,7 @@ static void test_ortho_and_load_multiply(struct l10gl_ctx *ctx)
 
 int main(void)
 {
+    unsetenv("L10GL_SWRAST_FB");
     struct l10gl_ctx ctx;
 
     if (l10gl_create(&ctx, &swrast_backend, 640, 480, 2) < 0) {

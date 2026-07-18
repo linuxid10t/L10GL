@@ -246,6 +246,10 @@ int main(void)
     char rgb565_path[256];
     int failed = 0;
 
+    /* Test output must stay offscreen even when the invoking shell normally
+     * uses swrast for a live framebuffer. */
+    unsetenv("L10GL_SWRAST_FB");
+
     if (!mkdtemp(directory)) {
         perror("test-swrast: mkdtemp");
         return 1;

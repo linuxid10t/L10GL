@@ -125,6 +125,9 @@ int main(int argc, char **argv)
 
     printf("cubediag: rotating cube + per-face color legend\n");
 
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
+
     struct l10gl_ctx ctx;
     if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "l10gl_create failed\n");
@@ -137,9 +140,6 @@ int main(int argc, char **argv)
         width = ctx.width;
         height = ctx.height;
     }
-
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
 
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);
     l10gl_clear_depth(&ctx, 1.0f);

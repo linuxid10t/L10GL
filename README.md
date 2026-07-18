@@ -133,7 +133,8 @@ make
 make check
 ```
 
-`make check` exercises the launcher fixture and checks swrast output pixels for
+`make check` exercises the launcher fixture, console ownership/restore state
+machine, and swrast output pixels for
 top-left coverage, blending, depth ordering, perspective correction, bilinear
 filtering, RGB565 conversion, and PPM serialization. It also validates matrix
 ordering, stack bounds, projections, viewport conversion, depth range,
@@ -172,8 +173,11 @@ sudo env L10GL_BACKEND=swrast L10GL_SWRAST_FB=/dev/fb0 ./cube
 This uses a packed 16-, 24-, or 32-bit fbdev mode. The demo geometry/depth is a
 request: if the current mode differs, L10GL asks the framebuffer driver to
 switch it, re-reads the actual mode and stride, and fails clearly if the driver
-refuses or ignores the request. P2 has not yet landed, so L10GL does not put the
-VT into `KD_GRAPHICS` or restore a changed fbdev mode on exit yet.
+refuses or ignores the request. Before that negotiation, L10GL saves the
+original fbdev mode and puts the active owning VT into `KD_GRAPHICS`; normal
+cleanup and the demos' handled SIGINT/SIGTERM paths restore the original mode
+and prior KD state. Offscreen swrast and no-fbdev native takeover do not touch
+a VT.
 
 Run a demo as root:
 
@@ -226,6 +230,8 @@ last rendered frame remains visible in the restored console mode.
 ```text
 src/
 ├── l10gl.c, l10gl.h             frontend API and backend registry
+├── console.c, console.h         fbdev mode save/restore and VT ownership
+├── fbdev.c, fbdev.h             shared mode negotiation/description
 ├── pci_scan.c, pci_scan.h       shared PCI sysfs discovery
 └── backends/
     ├── virge/                   S3 ViRGE glue and register driver

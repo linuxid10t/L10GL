@@ -12,6 +12,7 @@ LDFLAGS  = -lm
 LIBRARY = libl10gl.a
 LIB_SRCS = \
 	src/l10gl.c \
+	src/console.c \
 	src/fbdev.c \
 	src/l10gl_pipeline.c \
 	src/l10gl_xform.c \
@@ -30,11 +31,11 @@ DEMOS = $(FRONTEND_DEMOS) fbtest
 # the complete library; archive extraction pulls only the objects they use.
 TESTS = scantest filltest tritest gltritest fliptest dztest seamtest \
 	cubefb diagap texprobe
-CHECK_PROGRAMS = test-mode test-swrast test-xform test-pipeline
+CHECK_PROGRAMS = test-console test-mode test-swrast test-xform test-pipeline
 
 PROGRAMS = $(DEMOS) $(TESTS)
 PROGRAM_OBJS = $(addprefix demos/,$(addsuffix .o,$(PROGRAMS)))
-CHECK_OBJS = tests/test_mode.o tests/test_swrast.o tests/test_xform.o tests/test_pipeline.o
+CHECK_OBJS = tests/test_console.o tests/test_mode.o tests/test_swrast.o tests/test_xform.o tests/test_pipeline.o
 ALL_OBJS = $(LIB_OBJS) $(PROGRAM_OBJS) $(CHECK_OBJS)
 DEPS = $(ALL_OBJS:.o=.d)
 
@@ -44,6 +45,7 @@ all: $(LIBRARY) $(PROGRAMS)
 
 check: all $(CHECK_PROGRAMS)
 	bash tests/test-l10gl-run.sh
+	./test-console
 	./test-mode
 	./test-swrast
 	./test-xform
@@ -53,6 +55,9 @@ $(LIBRARY): $(LIB_OBJS)
 	$(AR) rcs $@ $^
 
 $(FRONTEND_DEMOS) $(TESTS): %: demos/%.o $(LIBRARY)
+	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
+
+test-console: tests/test_console.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 test-mode: tests/test_mode.o $(LIBRARY)

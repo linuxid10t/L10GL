@@ -691,8 +691,8 @@ remains in the demo files beyond scene description.
 
 ## Phase 3 — Presentation: mode setting, double buffering, vsync flip
 
-The P1 mode contract is now implemented; P2 console ownership/restore remains
-the next step. P3/P4 ViRGE swapping landed earlier in bring-up.
+The P1 mode contract and P2 console ownership/restore are now implemented;
+P3/P4 ViRGE swapping landed earlier in bring-up.
 This phase makes the display pipe a first-class part of the driver: adopt
 or set the video mode, own the console politely, and add back-buffer
 flipping. Mode setting is staged — fbdev-mediated first (small, portable,
@@ -741,6 +741,19 @@ mode and how to set it (with `vesafb`); rendering geometry/stride always
 comes from the live mode; no `width * bpp` stride math remains.
 
 ### P2. Console ownership and clean restore
+
+**Implemented and software-verified 2026-07-18; fbdev/VT hardware sign-off
+pending.** Backends now declare their fbdev target in the vtable. Before
+backend initialization, `src/console.c` snapshots `fb_var_screeninfo`, finds
+the active VT, verifies that VT is mapped to the target framebuffer when the
+kernel supports `FBIOGET_CON2FBMAP`, saves its existing KD mode, and enters
+`KD_GRAPHICS`. Destruction reverses ownership after backend cleanup: restore
+the exact saved fbdev mode first, restore the prior KD mode, then close both
+descriptors. Initialization failures unwind the same state. Offscreen swrast
+and the primary no-fbdev ViRGE takeover do not touch a VT. `test-console`
+covers acquisition, inactive framebuffer mapping, failure unwind, exact mode
+restoration, restore-error continuation, and idempotent release.
+
 Be a well-behaved fullscreen app. At init: save the current
 `fb_var_screeninfo`, put the owning VT into graphics mode
 (`KDSETMODE`/`KD_GRAPHICS`) so fbcon's cursor blink and kernel printk stop
@@ -753,12 +766,12 @@ fbdev/VT ioctl work with no card-specific code.
 the original mode, every time; no blinking cursor artifacts during
 rendering.
 
-**Partial groundwork (2026-07-17):** `tools/l10gl-run` now provides an
+**Complementary outside-process handoff (2026-07-17):** `tools/l10gl-run` provides an
 outside-the-process ownership handoff for machines with a kernel framebuffer:
 it detaches fbcon, unbinds the `/dev/fb0` owner and selected PCI driver, runs
 L10GL against the released card, then rebinds the exact drivers and fbcon. This
-flow is hardware-verified end to end. It does not complete P2's in-process VT
-`KD_GRAPHICS` handling or fbdev mode save/restore.
+flow is hardware-verified end to end. When that flow removes `/dev/fb0` before
+the child starts, the in-process P2 layer correctly remains inactive.
 
 ### P3. Frontend swap-buffers API
 `l10gl_swap_buffers(ctx)` + vtable `swap_buffers`. Semantics: finish

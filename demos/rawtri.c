@@ -43,6 +43,9 @@ int main(void)
     printf("L10GL Static Gouraud Triangle\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
+
     struct l10gl_ctx ctx;
     if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
@@ -59,9 +62,6 @@ int main(void)
         width = ctx.width;
         height = ctx.height;
     }
-
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
 
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);   /* black background */
     l10gl_clear_depth(&ctx, 1.0f);                /* far Z */
