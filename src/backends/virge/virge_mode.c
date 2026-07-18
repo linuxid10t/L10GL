@@ -296,6 +296,7 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     crtc_set(image, 0x31, 0x08, 0x38);
     crtc_set(image, 0x33, 0x00, 0x08); /* do not invert DCLK */
     crtc_set(image, 0x34, 0x10, 0x10);
+    crtc_set(image, 0x35, 0x00, 0x30); /* timing registers unlocked */
     crtc_set(image, 0x3a, 0x10, 0x18);
     crtc_set(image, 0x3b, (uint8_t)sff, 0xff);
     crtc_set(image, 0x42, 0x00, 0x20); /* progressive, not interlaced */
@@ -326,9 +327,13 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     /* Extended sequencer access must be unlocked through SR08 before SR12,
      * SR13, and SR15 are touched (DB019-B section 13.2.1, PDF p.90). SR15
      * bit 5 is toggled 0->1->0 by the future writer to load this PLL image.
-     * The masks make all four original bytes part of the save set. */
+     * SR01 is included so the writer can blank atomically and restore its
+     * original state. The masks make all five original bytes part of the
+     * save set. */
     image->seq_value[0x08] = 0x06;
     image->seq_mask[0x08] = 0xff;
+    image->seq_value[0x01] = 0x00; /* screen on after the atomic load */
+    image->seq_mask[0x01] = 0x20;
     image->seq_value[0x12] = image->pll.sr12;
     image->seq_mask[0x12] = 0x7f;
     image->seq_value[0x13] = image->pll.sr13;

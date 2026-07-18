@@ -858,7 +858,21 @@ are the exact register snapshot set the eventual writer must restore. The
 round-trips through the encoded overflow fields to its requested geometry and
 pitch. The FIFO-fetch policy preserves the target BIOS mode's verified 3 us
 refill interval at each dot clock. P6c is the opt-in save/apply/restore writer;
-only its first conservative 640x480@60 clock step requires hardware sign-off.
+its first 800x600@60 clock-isolation step requires hardware sign-off.
+
+**P6c first silicon gate implemented 2026-07-18; hardware sign-off pending.**
+`L10GL_MODESET=native` is now an explicit opt-in on the ViRGE no-fbdev path,
+but is deliberately restricted to 800x600@60 for its first run. That is the
+target machine's already-proven raster and reproduces P6b's verified takeover
+bytes, isolating the new SR12/SR13/SR15 programmable-clock load from a
+simultaneous resolution change. The path refuses to run while `/dev/fb0`
+exists (use `tools/l10gl-run`), snapshots every masked CRTC/sequencer register
+plus Misc Output and DAC mask, blanks the screen, loads the PLL and CRTC,
+requires masked readback to match, then restores the exact saved register
+bytes at cleanup. Default operation remains the hardware-verified live-raster
+takeover. After the 800x600 run and restore are confirmed, enable 640x480@60
+as the first actual resolution change; keep 75 Hz and 1024x768 gated (the
+latter also exceeds a 4MB card's double-buffer+Z budget).
 
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same

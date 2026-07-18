@@ -145,7 +145,7 @@ static void test_crtc_image(void)
     const struct virge_mode *mode = virge_mode_find(800, 600, 60);
     struct virge_crtc_image image;
     static const uint8_t extended[] = {
-        0x31, 0x33, 0x34, 0x3a, 0x3b, 0x42, 0x43, 0x50,
+        0x31, 0x33, 0x34, 0x35, 0x3a, 0x3b, 0x42, 0x43, 0x50,
         0x51, 0x55, 0x56, 0x58, 0x5d, 0x5e, 0x67, 0x69,
     };
     unsigned i;
@@ -170,7 +170,8 @@ static void test_crtc_image(void)
     EXPECT(image.value[0x58] == 0x13 && image.misc_value == 0x0f &&
            image.misc_mask == 0xcf,
            "4MB linear window and positive sync");
-    EXPECT(image.seq_value[0x08] == 0x06 &&
+    EXPECT(image.seq_mask[0x01] == 0x20 &&
+           image.seq_value[0x08] == 0x06 &&
            image.seq_value[0x12] == image.pll.sr12 &&
            image.seq_value[0x13] == image.pll.sr13 &&
            image.seq_mask[0x15] == 0x20,

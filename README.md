@@ -129,6 +129,18 @@ until L10GL takes over. Normal exits and signals restore ownership, but
 `SIGKILL`, a launcher crash, or a system crash cannot run cleanup. Do not use
 the launcher on a GPU serving an active graphical desktop.
 
+The first opt-in P6 native-modeset hardware gate is restricted to the already
+proven 800x600@60 raster. Run it over SSH:
+
+```sh
+sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
+    tools/l10gl-run -- ./cube 800 600 16
+```
+
+This test programs and verifies the ViRGE DCLK/CRTC image and restores the
+complete saved register state on exit. Other native resolutions remain locked
+out until this clock-isolation gate is confirmed on the target hardware.
+
 The detach/reattach sequence follows the Linux kernel's
 [`fbcon` documentation](https://docs.kernel.org/fb/fbcon.html) and the PCI
 driver [`bind`/`unbind` sysfs ABI](https://docs.kernel.org/admin-guide/abi-testing-files.html#abi-sys-bus-pci-drivers-unbind).

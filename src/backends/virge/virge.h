@@ -22,6 +22,8 @@
 
 #include <stdint.h>
 
+#include "virge_mode.h"
+
 /* ========================================================================
  * PCI Identification
  * ======================================================================== */
@@ -569,6 +571,15 @@ struct virge_ctx {
      * the display-start address that virge_swap_buffers may have moved. */
     int      scanout_owned;
     uint8_t  saved_scanout[20];
+    /* P6 opt-in native modeset state. The image masks define every register
+     * saved below; native_mode_owned becomes true only after the complete
+     * snapshot exists, so any later failure can restore safely. */
+    int      native_mode_owned;
+    struct virge_crtc_image native_mode_image;
+    uint8_t  saved_native_crtc[VIRGE_CRTC_IMAGE_SIZE];
+    uint8_t  saved_native_seq[VIRGE_SEQ_IMAGE_SIZE];
+    uint8_t  saved_native_misc;
+    uint8_t  saved_native_dac_mask;
     /* Snapshot of ALL VRAM taken at scanout takeover and memcpy'd back at
      * cleanup. On a no-fbdev box the console is the bootloader's VBE
      * framebuffer living in VRAM; our rendering overwrites it, and with no

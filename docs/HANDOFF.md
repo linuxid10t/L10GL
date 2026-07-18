@@ -123,16 +123,13 @@ SR12/SR13 DCLK solver. It rejects malformed or unrepresentable timings,
 enforces the documented M/N/R and 135-270 MHz VCO limits, and requires the
 generated clock to be within the databook's 0.5 percent tolerance. The
 hardware-independent `test-virge-mode` covers all six entries and exact 60 Hz
-PLL bytes. It is linked into the library but deliberately not called by
-`virge_init`, so `L10GL_MODESET` is not active and the verified native takeover
-has not changed. Next: encode the standard/extended CRTC bytes and a complete
-save/restore set as another hardware-inert, unit-tested slice before adding the
-opt-in register writer.
+PLL bytes. At that checkpoint the module was deliberately not called by
+`virge_init`, so it added no hardware writes.
 
 **Phase 3 P6b implemented 2026-07-18; still no hardware writes.**
 `virge_mode_encode_16bpp` converts a fixed mode into masked values for all 25
-standard CRTC registers and 16 extended CRTC registers, plus SR08/SR12/SR13/
-SR15, Misc Output, and the DAC mask. A nonzero mask means the future writer
+standard CRTC registers and 17 extended CRTC registers, plus SR01/SR08/SR12/
+SR13/SR15, Misc Output, and the DAC mask. A nonzero mask means the writer
 must snapshot and restore that register. The encoded 800x600 state matches the
 working takeover's decisive bytes exactly, and tests decode all six images
 back to their source width, height, and pitch. Extended state explicitly
@@ -140,8 +137,31 @@ disables interlace and clock inversion, enables sync/VCLK outputs, selects
 RGB555 Mode 9 with Streams off, clears every display-start extension, and
 sizes the linear window from detected VRAM. The CR3B policy holds the verified
 800x600 BIOS refill time at 3 us rather than applying the databook's inadequate
-"typically CR00-5" suggestion. P6c will add `L10GL_MODESET=native` and the
-ordered save/apply/restore writer; until then the existing path is unchanged.
+"typically CR00-5" suggestion. That checkpoint was also hardware-inert.
+
+**Phase 3 P6c first hardware gate implemented 2026-07-18; silicon validation
+pending.** `L10GL_MODESET=native` now selects a complete native save/apply/
+restore transaction, but only for 800x600@60. The restriction is intentional:
+the target already displays that raster correctly, so the first run isolates
+the new programmable DCLK load (40 MHz target, computed 40.025 MHz,
+SR12=49/SR13=79) and full-register restoration. The path requires `/dev/fb0`
+to be absent and directs the user to `tools/l10gl-run` otherwise. It blanks via
+SR01, loads SR12/SR13 and toggles SR15 bit 5 per DB019-B, installs the tested
+masked CRTC image, verifies every writable CRTC plus SR12/SR13 and Misc Output,
+then unblanks. Cleanup blanks again and restores all saved CRTC, sequencer,
+Misc Output, and DAC bytes in lock-safe order. No console-pixel fix is claimed;
+the known incoherent CPU aperture remains deferred, and launcher rebind is
+still responsible for redrawing fbcon. Default no-environment behavior is
+unchanged. Required test over SSH:
+
+```
+sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
+  tools/l10gl-run -- ./cube 800 600 16
+```
+
+Expected: the normal cube at 800x600 with no monitor resync/out-of-range event,
+the P6 PLL/readback lines in the log, and a working console after Ctrl-C and
+launcher rebind. Do not enable 640x480 until this exact gate is confirmed.
 
 ## Test setup (fixed, do not re-derive)
 
