@@ -166,6 +166,15 @@ then unblanks. Expanded pre/apply/restore logs include the vertical blank and
 display-start bytes needed to distinguish register state from expected VRAM
 content damage (native rendering overwrites the old simplefb pixels).
 
+**Corrective silicon result:** the live cube now fills the raster correctly;
+the black top band is gone. The exit-only shifted/white-bottom picture did not
+change, which matches the known console-pixel overwrite: the restored 32-bit
+simplefb scans L10GL's two 16-bit color buffers followed by its all-ones Z
+surface. `tools/l10gl-run` now follows fbcon reattachment with a temporary
+switch away from and back to the active VT, forcing fbcon to repaint the
+kernel-retained text buffer without clearing it. Fixture coverage verifies the
+switch order; real-console sign-off is pending.
+
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 800 600 16

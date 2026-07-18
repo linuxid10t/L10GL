@@ -782,6 +782,14 @@ L10GL against the released card, then rebinds the exact drivers and fbcon. This
 flow is hardware-verified end to end. When that flow removes `/dev/fb0` before
 the child starts, the in-process P2 layer correctly remains inactive.
 
+**Console-pixel redraw follow-up (2026-07-18; hardware re-test pending):** a
+P6 native run restored the correct raster but left the released 16-bit color
+buffers and all-ones Z buffer visible through the rebound 32-bit simplefb,
+appearing shifted upward with a white bottom. This is the already-diagnosed
+incoherent-BAR console-pixel problem, not a CRTC shift. After rebind/reattach,
+`l10gl-run` now switches from the active VT to a spare VT and immediately back;
+fbcon redraws the retained text cells without clearing the user's console.
+
 ### P3. Frontend swap-buffers API
 `l10gl_swap_buffers(ctx)` + vtable `swap_buffers`. Semantics: finish
 pending engine work, make the back buffer visible (at next vsync if
@@ -885,6 +893,10 @@ horizontal/depth/pitch/start subset already proven by `virge_scanout_takeover`,
 plus SR12/SR13/SR15 and the programmable-DCLK select. Cleanup repeats the saved
 display-start bytes after restoring the old PLL and waits one retrace before
 unblanking, ensuring the console start is latched in its own clock domain.
+The corrective run removed the black band completely. The exit image remained
+unchanged (shifted upward, white bottom), confirming stale overwritten console
+pixels as a separate launcher hand-back issue; the P2 follow-up above now
+forces a retained-VT repaint after fbcon is rebound.
 
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same

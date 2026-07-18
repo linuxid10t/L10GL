@@ -162,6 +162,48 @@ discover_fbcon()
     shopt -u nullglob
 }
 
+redraw_active_console()
+{
+    local active_path="$sysfs_root/class/tty/tty0/active"
+    local active_name active_num alternate
+    local chvt_command=${L10GL_CHVT_COMMAND:-chvt}
+
+    # fbcon retains each VT's text cells while detached, but attaching it does
+    # not necessarily repaint every pixel. That leaves the released card's
+    # 16-bit render/Z contents visible through the restored 32-bit simplefb
+    # mode. Switching to another VT and back makes fbcon repaint the retained
+    # console buffer without clearing the user's text.
+    [[ -r "$active_path" ]] || return 0
+    IFS= read -r active_name < "$active_path" || return 0
+    [[ "$active_name" =~ ^tty([1-9][0-9]*)$ ]] || return 0
+    active_num=${BASH_REMATCH[1]}
+    ((active_num <= 63)) || return 0
+    if ((active_num == 1)); then
+        alternate=2
+    else
+        alternate=1
+    fi
+
+    if ! command -v "$chvt_command" >/dev/null 2>&1; then
+        printf 'l10gl-run: WARNING: cannot redraw %s: chvt is unavailable\n' \
+            "$active_name" >&2
+        return 1
+    fi
+
+    printf 'l10gl-run: redrawing %s through temporary VT%d switch\n' \
+        "$active_name" "$alternate"
+    if ! "$chvt_command" "$alternate"; then
+        printf 'l10gl-run: WARNING: could not switch to VT%d for redraw\n' \
+            "$alternate" >&2
+        return 1
+    fi
+    if ! "$chvt_command" "$active_num"; then
+        printf 'l10gl-run: WARNING: could not return to %s after redraw\n' \
+            "$active_name" >&2
+        return 1
+    fi
+}
+
 restore_kernel_owners()
 {
     local failed=0
@@ -191,6 +233,11 @@ restore_kernel_owners()
             failed=1
         fi
     done
+    if ((${#detached_vtcon_bind[@]} > 0)); then
+        if ! redraw_active_console; then
+            failed=1
+        fi
+    fi
     return $failed
 }
 

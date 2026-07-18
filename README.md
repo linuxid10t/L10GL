@@ -109,7 +109,9 @@ sudo tools/l10gl-run -- ./cube
 The launcher selects the same card as L10GL, detaches every bound framebuffer
 console (`fbcon`), unbinds the driver that owns `/dev/fb0`, and unbinds the
 selected PCI function if it has a different driver. After the program exits it
-rebinds the exact drivers in reverse order and then reattaches `fbcon`.
+rebinds the exact drivers in reverse order and then reattaches `fbcon`. It
+finally switches to a spare virtual console and immediately back so fbcon
+repaints its retained text over any L10GL color/Z data left in VRAM.
 
 Inspect the complete plan without changing kernel state:
 

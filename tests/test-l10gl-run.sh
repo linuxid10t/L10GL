@@ -16,14 +16,22 @@ device_path=$fixture/bus/pci/devices/$bdf
 driver_path=$fixture/bus/pci/drivers/s3fb
 fb0_path=$fixture/class/graphics/fb0
 vtcon_path=$fixture/class/vtconsole/vtcon1
+tty0_path=$fixture/class/tty/tty0
+chvt_path=$fixture/bin/chvt
+chvt_log=$fixture/chvt.log
 
-mkdir -p "$device_path" "$driver_path" "$fb0_path" "$vtcon_path"
+mkdir -p "$device_path" "$driver_path" "$fb0_path" "$vtcon_path" \
+    "$tty0_path" "$fixture/bin"
 printf '0x5333\n' > "$device_path/vendor"
 printf '0x8a01\n' > "$device_path/device"
 printf '\n' > "$driver_path/bind"
 printf '\n' > "$driver_path/unbind"
 printf '(S) frame buffer device\n' > "$vtcon_path/name"
 printf '1\n' > "$vtcon_path/bind"
+printf 'tty1\n' > "$tty0_path/active"
+printf '%s\n' '#!/usr/bin/env bash' \
+    'printf '\''%s\n'\'' "$1" >> "$L10GL_CHVT_LOG"' > "$chvt_path"
+chmod +x "$chvt_path"
 ln -s "$driver_path" "$device_path/driver"
 ln -s "$device_path" "$fb0_path/device"
 
@@ -35,17 +43,23 @@ grep -Fq "will unbind /dev/fb0 driver s3fb from $bdf" <<< "$dry_output"
 grep -Fq "dry run; no sysfs state changed" <<< "$dry_output"
 [[ $(<"$vtcon_path/bind") == 1 ]]
 
-run_output=$(L10GL_SYSFS_ROOT=$fixture \
+run_output=$(L10GL_SYSFS_ROOT=$fixture L10GL_CHVT_COMMAND=$chvt_path \
+    L10GL_CHVT_LOG=$chvt_log \
     "$repo_root/tools/l10gl-run" -- /bin/true)
 grep -Fq "unbinding /dev/fb0 driver s3fb from $bdf" <<< "$run_output"
 grep -Fq "rebinding /dev/fb0 driver s3fb to $bdf" <<< "$run_output"
 grep -Fq "reattaching fbcon" <<< "$run_output"
+grep -Fq "redrawing tty1 through temporary VT2 switch" <<< "$run_output"
 [[ $(<"$driver_path/unbind") == "$bdf" ]]
 [[ $(<"$driver_path/bind") == "$bdf" ]]
 [[ $(<"$vtcon_path/bind") == 1 ]]
+[[ $(sed -n '1p' "$chvt_log") == 2 ]]
+[[ $(sed -n '2p' "$chvt_log") == 1 ]]
 
 set +e
-L10GL_SYSFS_ROOT=$fixture "$repo_root/tools/l10gl-run" -- /bin/sh -c 'exit 7' \
+L10GL_SYSFS_ROOT=$fixture L10GL_CHVT_COMMAND=$chvt_path \
+    L10GL_CHVT_LOG=$chvt_log \
+    "$repo_root/tools/l10gl-run" -- /bin/sh -c 'exit 7' \
     > /dev/null
 child_status=$?
 set -e
