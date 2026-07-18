@@ -907,8 +907,8 @@ firmware/simplefb baseline, the same P6 run rendered correctly and returned to
 a correct framebuffer console. The 800x600 PLL/save/restore gate is closed;
 640x480@60 is now the next P6 resolution-change gate.
 
-**P6d 640x480@60 resolution gate implemented 2026-07-18; corrected
-clock-source validation pending.** The opt-in native path now admits 640x480
+**P6d 640x480@60 resolution gate implemented and silicon-verified
+2026-07-18.** The opt-in native path now admits 640x480
 alongside the verified 800x600 clock gate. Unlike 800x600, 640x480 applies the complete standard and
 extended CRTC image because it is a real raster change. The image is locked by
 tests to DB019-B's exact field encodings: CR00-CR18, CR5D/CR5E overflow, pitch,
@@ -961,6 +961,12 @@ the desired blank and sync widths fit the base wrapping fields. The corrected
 already-accepted 800 clock-only gate retains `CR5D=21` explicitly so this
 correction cannot silently change that signed-off path.
 
+The corrected `CR5D=00` image passed on the target ViRGE/DX: the monitor
+accepted 640x480, the rotating cube was visible, internal sync measured about
+31.33kHz / 59.67Hz, Ctrl-C restored the complete pre-mode register image, and
+the monitor recovered to the 800x600 simplefb console. P6d is closed. Keep
+75Hz and 1024x768 locked for the next staged gates.
+
 75Hz and 1024x768 remain locked. Hardware test over SSH:
 
 ```
@@ -968,8 +974,8 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 640 480 16
 ```
 
-Acceptance: monitor synchronizes at 640x480, the cube fills that raster without
-bands or displacement, and Ctrl-C returns to the clean pre-run 800x600 console.
+Acceptance confirmed: the monitor synchronizes at 640x480, the cube is visible,
+and Ctrl-C returns to the pre-run 800x600 console.
 
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same

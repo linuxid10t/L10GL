@@ -177,8 +177,8 @@ the active VT so the kernel-retained text overwrites L10GL's stale color/Z
 pixels. The 800x600 PLL and restore gate is closed; enable 640x480@60 next as
 the first real resolution-change test.
 
-**P6d 640x480@60 gate implemented; corrected clock-source validation
-pending.** The backend now allows that mode under `L10GL_MODESET=native` and applies the complete
+**P6d 640x480@60 gate implemented and silicon-verified 2026-07-18.** The
+backend now allows that mode under `L10GL_MODESET=native` and applies the complete
 databook-derived CRTC image rather than the 800x600 clock gate's restricted
 live-raster subset. Unit tests pin all 25 standard bytes plus CR5D/CR5E, pitch,
 sync polarity, FIFO fetch, and the exact built-in 25.175MHz VGA DCLK selected
@@ -220,9 +220,15 @@ bits 3/5 as pulse-length extensions and excludes them from the horizontal
 blank/sync end-position mappings. DB019-B Table 14-1 and CR5D agree that these
 bits add 64 DCLKs of blank and 32 DCLKs of HSYNC; they are not ordinary high
 end-position bits. P6d's `CR5D=28` therefore made both 640x480 pulses far too
-long while leaving their measured periods correct. The pending image uses
+long while leaving their measured periods correct. The corrected image uses
 `CR5D=00` and restores s3fb's normal `CR33.3=0`. The P6c 800x600 clock-only
 limiter explicitly retains its silicon-verified `CR5D=21` byte.
+
+That corrected image passed on the target ViRGE/DX: the monitor accepted the
+mode, the rotating cube was visible, native sync measured approximately
+31.33kHz / 59.67Hz, and cleanup restored the 800x600 simplefb signal. P6d is
+closed; retain the diagnostic rate/routing logs for the later 75Hz and
+1024x768 gates.
 
 Run over SSH from a clean console baseline:
 
@@ -231,9 +237,9 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 640 480 16
 ```
 
-Verify a correctly filled 640x480 display, no out-of-range event, and exact
-restoration of the original 800x600 simplefb console after Ctrl-C. Keep 75Hz
-and 1024x768 locked until this gate passes.
+Verified: visible 640x480 cube, no out-of-range event, and recovery of the
+original 800x600 simplefb signal after Ctrl-C. Keep 75Hz and 1024x768 locked
+until their own staged gates.
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
@@ -242,7 +248,7 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
 
 Expected: the normal cube at 800x600 with no monitor resync/out-of-range event,
 the P6 PLL/readback lines in the log, and a working console after Ctrl-C and
-launcher rebind. This gate is confirmed; the P6d command above is next.
+launcher rebind. This gate and P6d are confirmed.
 
 ## Test setup (fixed, do not re-derive)
 

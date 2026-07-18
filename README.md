@@ -142,19 +142,18 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
 ```
 
 This test programs and verifies the ViRGE DCLK/CRTC image and restores the
-complete saved register state on exit. Other native resolutions remain locked;
-640x480@60 is now the next deliberate hardware gate:
+complete saved register state on exit. The first true resolution-change gate,
+640x480@60, is also hardware-verified:
 
 ```sh
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
     tools/l10gl-run -- ./cube 640 480 16
 ```
 
-This is the first true resolution change and uses the complete fixed CRTC
-image plus the ViRGE's exact built-in 25.175MHz VGA clock. Its corrected
-clock-source path is awaiting hardware validation after the initial
-programmable-PLL attempt produced an out-of-range signal. The 75Hz and
-1024x768 entries remain locked pending staged hardware validation.
+This uses the complete fixed CRTC image plus the ViRGE's built-in 25.175MHz
+VGA clock. The validated encoder leaves CR5D pulse-length extensions clear for
+the standard blank and sync widths. The 75Hz and 1024x768 entries remain
+locked pending staged hardware validation.
 
 The detach/reattach sequence follows the Linux kernel's
 [`fbcon` documentation](https://docs.kernel.org/fb/fbcon.html) and the PCI

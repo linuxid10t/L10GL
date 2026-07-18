@@ -2077,8 +2077,8 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                             "%dx%d\n", width, height);
             return -ENOTSUP;
         }
-        /* P6d opens only the first real resolution change after the verified
-         * 800x600 clock gate. Keep 75Hz and 1024x768 locked. */
+        /* P6d opens only the first hardware-verified resolution change after
+         * the 800x600 clock gate. Keep 75Hz and 1024x768 locked. */
         if (!((width == 800 && height == 600) ||
               (width == 640 && height == 480))) {
             fprintf(stderr, "S3 ViRGE: P6 hardware gates permit only "
@@ -2157,7 +2157,9 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
         ctx->stride = (uint32_t)native_mode->width * 2u;
         ctx->fb_size = (size_t)ctx->stride * native_mode->height;
         printf("S3 ViRGE: L10GL_MODESET=native requested; kernel fb owner "
-               "is absent and the fixed 800x600@60 gate will be applied\n");
+               "is absent and fixed %ux%u@%u will be applied\n",
+               native_mode->width, native_mode->height,
+               native_mode->refresh_hz);
     } else {
         if (bpp != 2) {
             fprintf(stderr,
