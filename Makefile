@@ -12,6 +12,7 @@ LDFLAGS  = -lm
 LIBRARY = libl10gl.a
 LIB_SRCS = \
 	src/l10gl.c \
+	src/l10gl_pipeline.c \
 	src/l10gl_xform.c \
 	src/pci_scan.c \
 	src/backends/swrast/swrast.c \
@@ -28,11 +29,11 @@ DEMOS = $(FRONTEND_DEMOS) fbtest
 # the complete library; archive extraction pulls only the objects they use.
 TESTS = scantest filltest tritest gltritest fliptest dztest seamtest \
 	cubefb diagap texprobe
-CHECK_PROGRAMS = test-swrast test-xform
+CHECK_PROGRAMS = test-swrast test-xform test-pipeline
 
 PROGRAMS = $(DEMOS) $(TESTS)
 PROGRAM_OBJS = $(addprefix demos/,$(addsuffix .o,$(PROGRAMS)))
-CHECK_OBJS = tests/test_swrast.o tests/test_xform.o
+CHECK_OBJS = tests/test_swrast.o tests/test_xform.o tests/test_pipeline.o
 ALL_OBJS = $(LIB_OBJS) $(PROGRAM_OBJS) $(CHECK_OBJS)
 DEPS = $(ALL_OBJS:.o=.d)
 
@@ -44,6 +45,7 @@ check: all $(CHECK_PROGRAMS)
 	bash tests/test-l10gl-run.sh
 	./test-swrast
 	./test-xform
+	./test-pipeline
 
 $(LIBRARY): $(LIB_OBJS)
 	$(AR) rcs $@ $^
@@ -55,6 +57,9 @@ test-swrast: tests/test_swrast.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 test-xform: tests/test_xform.o $(LIBRARY)
+	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
+
+test-pipeline: tests/test_pipeline.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 # CPU-drawn fbdev pattern; deliberately independent of L10GL and PCI access.

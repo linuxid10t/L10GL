@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #include "l10gl.h"
+#include "l10gl_pipeline.h"
 #include "l10gl_xform.h"
 
 /* ========================================================================
@@ -104,6 +105,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
 
     /* Transform state depends on the actual raster adopted by the backend. */
     l10gl_xform_init(ctx);
+    l10gl_pipeline_init(ctx);
 
     printf("L10GL: Backend '%s' initialized (%dx%d @ %dbpp)\n",
            backend->name, ctx->width, ctx->height, ctx->bpp * 8);

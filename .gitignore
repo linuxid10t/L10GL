@@ -22,3 +22,4 @@ diagap
 texprobe
 test-swrast
 test-xform
+test-pipeline

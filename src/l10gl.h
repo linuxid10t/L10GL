@@ -45,8 +45,23 @@ enum l10gl_matrix_mode {
     L10GL_MATRIX_PROJECTION,
 };
 
+/* Front faces are counter-clockwise after projection, matching OpenGL. */
+enum l10gl_cull_mode {
+    L10GL_CULL_NONE,
+    L10GL_CULL_FRONT,
+    L10GL_CULL_BACK,
+};
+
 #define L10GL_MODELVIEW_STACK_DEPTH 32
 #define L10GL_PROJECTION_STACK_DEPTH 4
+
+/* Vertex captured by the immediate-mode frontend before transformation. */
+struct l10gl_immediate_vertex {
+    float x, y, z;
+    float r, g, b, a;
+    float nx, ny, nz;
+    float u, v;
+};
 
 /* Depth comparison functions (match OpenGL ordering) */
 enum l10gl_depth_func {
@@ -257,6 +272,16 @@ struct l10gl_ctx {
     enum l10gl_matrix_mode matrix_mode_val;
     int viewport_x, viewport_y, viewport_width, viewport_height;
     float depth_range_near, depth_range_far;
+
+    /* Immediate-mode current attributes and streaming assembly state. */
+    float current_r, current_g, current_b, current_a;
+    float current_nx, current_ny, current_nz;
+    float current_u, current_v;
+    enum l10gl_cull_mode cull_mode_val;
+    int immediate_active;
+    enum l10gl_primitive immediate_primitive;
+    unsigned long immediate_vertex_count;
+    struct l10gl_immediate_vertex immediate_vertices[3];
 };
 
 /* ========================================================================
@@ -330,6 +355,19 @@ void l10gl_object_to_clip(const struct l10gl_ctx *ctx,
                           const float object[4], float clip[4]);
 void l10gl_ndc_to_window(const struct l10gl_ctx *ctx,
                          const float ndc[3], float window[3]);
+
+/* Immediate-mode model-space submission. Attributes are current state and are
+ * captured by each vertex. begin/end/vertex return negative errno-style
+ * values for invalid nesting, unsupported primitives, or out-of-block use.
+ * Incomplete primitives at end are ignored, matching legacy OpenGL. */
+int l10gl_begin(struct l10gl_ctx *ctx, enum l10gl_primitive primitive);
+int l10gl_end(struct l10gl_ctx *ctx);
+int l10gl_vertex3f(struct l10gl_ctx *ctx, float x, float y, float z);
+void l10gl_color4f(struct l10gl_ctx *ctx,
+                   float r, float g, float b, float a);
+void l10gl_normal3f(struct l10gl_ctx *ctx, float x, float y, float z);
+void l10gl_texcoord2f(struct l10gl_ctx *ctx, float u, float v);
+int l10gl_cull_face(struct l10gl_ctx *ctx, enum l10gl_cull_mode mode);
 
 /* Drawing primitives */
 void l10gl_draw_triangle(struct l10gl_ctx *ctx,
