@@ -2,7 +2,7 @@
  * textured_cube.c - Spinning textured cube demo using L10GL.
  *
  * Hardware-agnostic — uses the L10GL frontend API. The backend is selected
- * at compile time. If the backend supports texture mapping (ViRGE), it
+ * at runtime. If the backend supports texture mapping (ViRGE), it
  * uses hardware textured triangles. If not (MGA-1064SG), it silently
  * falls back to Gouraud shading.
  *
@@ -201,25 +201,19 @@ int main(int argc, char **argv)
         bpp = atoi(argv[3]) / 8;
     }
 
-    /* Select backend */
-#ifdef BACKEND_VIRGE
-    const struct l10gl_backend *backend = &virge_backend;
-#else
-    const struct l10gl_backend *backend = &mga1064_backend;
-#endif
-
-    int has_texture = (backend->caps & L10GL_CAP_TEXTURE) != 0;
-
-    printf("L10GL Textured Cube Demo (backend: %s)\n", backend->name);
-    printf("Texture mapping: %s\n",
-           has_texture ? "hardware" : "not supported, using Gouraud fallback");
+    printf("L10GL Textured Cube Demo\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
     struct l10gl_ctx ctx;
-    if (l10gl_create(&ctx, backend, width, height, bpp) < 0) {
+    if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
         return 1;
     }
+
+    int has_texture = (ctx.backend->caps & L10GL_CAP_TEXTURE) != 0;
+    printf("Selected backend: %s\n", ctx.backend->name);
+    printf("Texture mapping: %s\n",
+           has_texture ? "hardware" : "not supported, using Gouraud fallback");
 
     /* The backend may adopt the real screen mode instead of the request
      * (native scanout takeover on no-fbdev machines) -- render to what

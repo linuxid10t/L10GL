@@ -22,7 +22,7 @@
  * tri A = red, tri B = green (distinct so ownership/overlap is visible;
  * color does not affect geometry or Z).
  *
- * Build: make -B BACKEND=virge diagap     Run: sudo ./diagap [angle-index]
+ * Build: make -B diagap     Run: sudo ./diagap [angle-index]
  *   default angle-index 31 = 310 deg (cubefb's worst). Try others, e.g. 3.
  */
 

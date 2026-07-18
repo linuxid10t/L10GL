@@ -230,6 +230,7 @@ static void mga_be_wait_vsync(struct l10gl_ctx *ctx)
 
 const struct l10gl_backend mga1064_backend = {
     .name         = "mga1064",
+    .probe        = mga1064_probe,
     .init         = mga_be_init,
     .cleanup      = mga_be_cleanup,
     .clear_color  = mga_be_clear_color,

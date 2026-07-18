@@ -140,6 +140,7 @@ struct l10gl_backend {
     const char *name;     /* e.g. "mga1064", "virge" */
 
     /* --- Lifecycle --- */
+    int  (*probe)(void);  /* >0 if this backend's hardware is present */
     int  (*init)(struct l10gl_ctx *ctx, int width, int height, int bpp);
     void (*cleanup)(struct l10gl_ctx *ctx);
 
@@ -250,6 +251,13 @@ struct l10gl_ctx {
 int l10gl_create(struct l10gl_ctx *ctx,
                  const struct l10gl_backend *backend,
                  int width, int height, int bpp);
+
+/* Select the first detected backend (ViRGE first), unless overridden by
+ * L10GL_BACKEND=<name>. A forced backend is returned without probing so its
+ * init path can report the precise reason it cannot start. */
+const struct l10gl_backend *l10gl_autodetect(void);
+int l10gl_create_auto(struct l10gl_ctx *ctx,
+                      int width, int height, int bpp);
 
 void l10gl_destroy(struct l10gl_ctx *ctx);
 

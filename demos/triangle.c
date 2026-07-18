@@ -16,7 +16,7 @@
  * colors. A fat/sheared corner, a sheared gradient, or black output
  * indicates a regression in the edge setup (V9) or color scale (V10).
  *
- * Build: make triangle            (or: make BACKEND=virge triangle)
+ * Build: make triangle
  * Run:   sudo ./triangle
  */
 
@@ -40,20 +40,15 @@ int main(void)
     int height = 480;
     int bpp = 2;  /* 16bpp */
 
-#ifdef BACKEND_VIRGE
-    const struct l10gl_backend *backend = &virge_backend;
-#else
-    const struct l10gl_backend *backend = &mga1064_backend;
-#endif
-
-    printf("L10GL Static Gouraud Triangle (backend: %s)\n", backend->name);
+    printf("L10GL Static Gouraud Triangle\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
     struct l10gl_ctx ctx;
-    if (l10gl_create(&ctx, backend, width, height, bpp) < 0) {
+    if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
         return 1;
     }
+    printf("Selected backend: %s\n", ctx.backend->name);
 
     /* The backend may adopt the real screen mode instead of the request
      * (native scanout takeover on no-fbdev machines) -- place the

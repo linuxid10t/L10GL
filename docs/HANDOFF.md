@@ -81,18 +81,19 @@ The workspace machine has **no ViRGE card**; David tests on a separate box
 anything until it is pushed.
 
 For every change:
-- Build locally first (`gcc` needs no card): `make -B BACKEND=virge <target>`
-  to confirm it compiles before he ever pulls.
+- Build locally first (`gcc` needs no card): `make -B <target>` to confirm it
+  compiles before he ever pulls. Plain `make` builds the static library, all
+  backends, every frontend demo, and every retained diagnostic.
 - `git commit` with the **expected hardware observation** in the message
   (what David should see on `david-ta970`), then `git push origin main`
   **immediately**.
 - **Never hold a commit "until hardware-verified" — that deadlocks him.**
   Push first; he pulls, runs on `david-ta970`, and reports logs/photos back.
 
-Gotcha: `gltritest`/`tritest`/`filltest`/`fliptest`/`dztest` are NOT in
-`DEMOS`, so `make -B BACKEND=virge` does NOT rebuild them — build each
-target explicitly (a stale `gltritest` binary still reports the old Z base
-`0xea600` + the old vsync timeout).
+The old `BACKEND=` build switch no longer exists: frontend demos autodetect at
+runtime and `L10GL_BACKEND=virge|mga1064` forces one. ViRGE-only diagnostics
+link the ViRGE objects from `libl10gl.a` directly. `make -B` rebuilds all of
+them, preventing the stale-diagnostic problem described later in this handoff.
 
 ## Ground rules (from PLAN.md, non-negotiable)
 
@@ -101,7 +102,7 @@ target explicitly (a stale `gltritest` binary still reports the old Z base
   CR50), the kernel `s3fb` driver and 86Box are the documented
   behavioral references — consult, never copy code (86Box is GPL).
 - One logical change per commit; never mix refactor with behavior.
-  Every commit builds clean: `make -B BACKEND=virge && make scantest`.
+  Every commit builds clean: `make -B`.
 - Never write an unbounded register-poll loop (see the
   `virge_wait_vsync` latched-VSY-INT lesson in virge.c).
 - State in each commit message exactly what the human should observe

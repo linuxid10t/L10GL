@@ -7,6 +7,8 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 
 #include "l10gl.h"
 
@@ -14,10 +16,63 @@
  * Lifecycle
  * ======================================================================== */
 
+/* Priority order matters when a machine contains more than one supported
+ * adapter: the ViRGE is L10GL's primary, silicon-tested target. */
+static const struct l10gl_backend *const l10gl_backends[] = {
+    &virge_backend,
+    &mga1064_backend,
+};
+
+const struct l10gl_backend *l10gl_autodetect(void)
+{
+    const char *forced = getenv("L10GL_BACKEND");
+    size_t i;
+
+    if (forced && forced[0]) {
+        for (i = 0; i < sizeof(l10gl_backends) / sizeof(l10gl_backends[0]); i++) {
+            if (strcmp(forced, l10gl_backends[i]->name) == 0) {
+                printf("L10GL: forcing backend '%s' via L10GL_BACKEND\n",
+                       forced);
+                return l10gl_backends[i];
+            }
+        }
+
+        fprintf(stderr, "L10GL: unknown backend '%s' (available:", forced);
+        for (i = 0; i < sizeof(l10gl_backends) / sizeof(l10gl_backends[0]); i++)
+            fprintf(stderr, " %s", l10gl_backends[i]->name);
+        fprintf(stderr, ")\n");
+        return NULL;
+    }
+
+    for (i = 0; i < sizeof(l10gl_backends) / sizeof(l10gl_backends[0]); i++) {
+        const struct l10gl_backend *backend = l10gl_backends[i];
+
+        if (backend->probe && backend->probe() > 0) {
+            printf("L10GL: detected backend '%s'\n", backend->name);
+            return backend;
+        }
+    }
+
+    fprintf(stderr, "L10GL: no supported graphics adapter detected\n");
+    return NULL;
+}
+
+int l10gl_create_auto(struct l10gl_ctx *ctx, int width, int height, int bpp)
+{
+    const struct l10gl_backend *backend = l10gl_autodetect();
+
+    if (!backend)
+        return -ENODEV;
+    return l10gl_create(ctx, backend, width, height, bpp);
+}
+
 int l10gl_create(struct l10gl_ctx *ctx,
                  const struct l10gl_backend *backend,
                  int width, int height, int bpp)
 {
+    if (!ctx || !backend)
+        return -EINVAL;
+
     memset(ctx, 0, sizeof(*ctx));
     ctx->backend = backend;
 
@@ -46,7 +101,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
     }
 
     printf("L10GL: Backend '%s' initialized (%dx%d @ %dbpp)\n",
-           backend->name, width, height, bpp * 8);
+           backend->name, ctx->width, ctx->height, ctx->bpp * 8);
     printf("  Caps: %s%s%s%s%s%s%s%s%s\n",
            ctx->backend->caps & L10GL_CAP_GOURAUD     ? "Gouraud " : "",
            ctx->backend->caps & L10GL_CAP_ZBUFFER     ? "Z-buffer " : "",

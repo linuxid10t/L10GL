@@ -101,7 +101,7 @@
  * Drives the real frontend API and reaches struct virge_ctx via
  * ctx.backend_data (hw is the first field of virge_private) for readback.
  *
- * Build: make -B BACKEND=virge texprobe     Run: sudo ./texprobe
+ * Build: make -B texprobe     Run: sudo ./texprobe
  */
 
 #include <stdio.h>
@@ -199,12 +199,7 @@ int main(int argc, char **argv)
     (void)argc; (void)argv;
     struct l10gl_ctx ctx;
 
-#ifdef BACKEND_VIRGE
     const struct l10gl_backend *backend = &virge_backend;
-#else
-    fprintf(stderr, "texprobe requires BACKEND=virge\n");
-    return 1;
-#endif
     if (!(backend->caps & L10GL_CAP_TEXTURE)) {
         fprintf(stderr, "backend advertises no texture cap\n");
         return 1;

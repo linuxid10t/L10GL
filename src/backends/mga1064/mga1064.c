@@ -24,6 +24,25 @@
 #include "../../pci_scan.h"
 #include "mga1064.h"
 
+static const uint16_t mga_devices[] = {
+    MGA_PCI_DEVICE_1064SG_PCI,
+    MGA_PCI_DEVICE_1064SG_AGP,
+    MGA_PCI_DEVICE_1064SG_ALT,
+};
+
+static int mga1064_find_device(struct l10gl_pci_device *device)
+{
+    return l10gl_pci_find(device, MGA_PCI_VENDOR_ID, mga_devices,
+                          sizeof(mga_devices) / sizeof(mga_devices[0]));
+}
+
+int mga1064_probe(void)
+{
+    struct l10gl_pci_device device;
+
+    return mga1064_find_device(&device) == 0;
+}
+
 /* ========================================================================
  * Memory Mapping
  * ========================================================================
@@ -459,14 +478,8 @@ int mga1064_init(struct mga1064_ctx *ctx, int width, int height, int bpp)
      *   0x051E - Mystique AGP
      *   0x0100 - Mystique (alternate ID on some boards)
      */
-    static const uint16_t mga_devices[] = {
-        MGA_PCI_DEVICE_1064SG_PCI,
-        MGA_PCI_DEVICE_1064SG_AGP,
-        MGA_PCI_DEVICE_1064SG_ALT,
-    };
     struct l10gl_pci_device pci;
-    int ret = l10gl_pci_find(&pci, MGA_PCI_VENDOR_ID, mga_devices,
-                             sizeof(mga_devices) / sizeof(mga_devices[0]));
+    int ret = mga1064_find_device(&pci);
     if (ret < 0) {
         fprintf(stderr, "MGA-1064SG: PCI device not found\n");
         return ret;

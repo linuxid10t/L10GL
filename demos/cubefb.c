@@ -25,7 +25,7 @@
  * the worst. The framebuffer is CPU-read directly, bypassing the monitor, so
  * any contamination here is a real per-frame VRAM artifact.
  *
- * Build: make -B BACKEND=virge cubefb     Run: sudo ./cubefb [N]
+ * Build: make -B cubefb     Run: sudo ./cubefb [N]
  */
 
 #include <stdio.h>

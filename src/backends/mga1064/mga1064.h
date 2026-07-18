@@ -359,6 +359,9 @@ struct mga1064_ctx {
     uint32_t z_offset;      /* Pixel offset of Z buffer origin in VRAM */
 };
 
+/* Read-only sysfs presence probe used by runtime backend selection. */
+int mga1064_probe(void);
+
 /*
  * mga1064_init - Find the Mystique, map memory, initialize drawing engine.
  * @ctx:     Context to initialize.

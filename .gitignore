@@ -1,4 +1,5 @@
 *.o
+*.d
 cube
 textured_cube
 *.a

@@ -539,6 +539,21 @@ static void virge_scanout_takeover(struct virge_ctx *ctx)
  * Memory Mapping
  * ======================================================================== */
 
+static const uint16_t virge_devices[] = S3_PCI_DEVICE_VIRGE_ALL;
+
+static int virge_find_device(struct l10gl_pci_device *device)
+{
+    return l10gl_pci_find(device, S3_PCI_VENDOR_ID, virge_devices,
+                          sizeof(virge_devices) / sizeof(virge_devices[0]));
+}
+
+int virge_probe(void)
+{
+    struct l10gl_pci_device device;
+
+    return virge_find_device(&device) == 0;
+}
+
 /*
  * Map BAR0 via /sys/bus/pci/devices/<bdf>/resource0
  *
@@ -1758,9 +1773,7 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 
     /* Find the S3 ViRGE on the PCI bus */
     struct l10gl_pci_device pci = {0};
-    static const uint16_t virge_devices[] = S3_PCI_DEVICE_VIRGE_ALL;
-    int ret = l10gl_pci_find(&pci, S3_PCI_VENDOR_ID, virge_devices,
-                             sizeof(virge_devices) / sizeof(virge_devices[0]));
+    int ret = virge_find_device(&pci);
     if (ret < 0) {
         fprintf(stderr, "S3 ViRGE: PCI device not found\n");
         return ret;

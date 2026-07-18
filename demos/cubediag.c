@@ -26,7 +26,7 @@
  * orientation statically (to photograph a specific bleed) and print which
  * faces are visible; without one, slow-rotate.
  *
- * Build: make -B BACKEND=virge cubediag     Run: sudo ./cubediag [angle]
+ * Build: make cubediag     Run: sudo ./cubediag [angle]
  */
 
 #include <stdio.h>
@@ -123,18 +123,14 @@ int main(int argc, char **argv)
         static_mode = 1;
     }
 
-#ifdef BACKEND_VIRGE
-    const struct l10gl_backend *backend = &virge_backend;
-#else
-    const struct l10gl_backend *backend = &mga1064_backend;
-#endif
-    printf("cubediag: rotating cube + per-face color legend (backend: %s)\n", backend->name);
+    printf("cubediag: rotating cube + per-face color legend\n");
 
     struct l10gl_ctx ctx;
-    if (l10gl_create(&ctx, backend, width, height, bpp) < 0) {
+    if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "l10gl_create failed\n");
         return 1;
     }
+    printf("Selected backend: %s\n", ctx.backend->name);
     if (ctx.width != width || ctx.height != height) {
         printf("Adopted actual screen %dx%d (requested %dx%d)\n",
                ctx.width, ctx.height, width, height);

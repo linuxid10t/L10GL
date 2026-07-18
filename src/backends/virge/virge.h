@@ -689,6 +689,9 @@ struct virge_vertex {
  * API
  * ======================================================================== */
 
+/* Read-only sysfs presence probe used by runtime backend selection. */
+int virge_probe(void);
+
 /*
  * virge_init - Find the ViRGE, map memory, initialize the S3d Engine.
  * @ctx:     Context to initialize.

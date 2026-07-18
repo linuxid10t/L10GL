@@ -1,9 +1,8 @@
 /*
  * cube.c - Spinning Gouraud-shaded cube demo using L10GL.
  *
- * Hardware-agnostic — uses the L10GL frontend API. The backend is selected
- * at compile time (currently mga1064, but any backend implementing the
- * l10gl_backend vtable works).
+ * Hardware-agnostic — uses the L10GL frontend API. The backend is detected
+ * at runtime or selected with L10GL_BACKEND=<name>.
  *
  * Build: make
  * Run:   sudo ./cube [width height bpp]
@@ -152,22 +151,15 @@ int main(int argc, char **argv)
         bpp = atoi(argv[3]) / 8;
     }
 
-    /* Select backend at compile time.
-     * The Makefile defines -DBACKEND_VIRGE or -DBACKEND_MGA1064. */
-#ifdef BACKEND_VIRGE
-    const struct l10gl_backend *backend = &virge_backend;
-#else
-    const struct l10gl_backend *backend = &mga1064_backend;
-#endif
-
-    printf("L10GL Gouraud Cube Demo (backend: %s)\n", backend->name);
+    printf("L10GL Gouraud Cube Demo\n");
     printf("Initializing %dx%d @ %dbpp...\n", width, height, bpp * 8);
 
     struct l10gl_ctx ctx;
-    if (l10gl_create(&ctx, backend, width, height, bpp) < 0) {
+    if (l10gl_create_auto(&ctx, width, height, bpp) < 0) {
         fprintf(stderr, "Failed to initialize L10GL.\n");
         return 1;
     }
+    printf("Selected backend: %s\n", ctx.backend->name);
 
     /* The backend may adopt the real screen mode instead of the request
      * (native scanout takeover on no-fbdev machines) -- render to what

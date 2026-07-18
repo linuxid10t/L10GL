@@ -18,7 +18,7 @@
  * ceil(X)) -- NOT uniformly inclusive. So the double-draw suspect is the START
  * edge (edge 02), measured below, plus the direct overlap check.
  *
- * Build: make -B BACKEND=virge seamtest     Run: sudo ./seamtest
+ * Build: make -B seamtest     Run: sudo ./seamtest
  */
 
 #include <stdio.h>

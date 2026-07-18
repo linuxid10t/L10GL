@@ -28,7 +28,7 @@
  *   ratio ~= 1.0   -> gradient correct on silicon.
  *   ratio < 0      -> sign flip in the programmed delta.
  *
- * Build: make -B BACKEND=virge dztest     Run: sudo ./dztest
+ * Build: make -B dztest     Run: sudo ./dztest
  */
 
 #include <stdio.h>
