@@ -298,6 +298,12 @@ Verified result: measured sync was 46.893kHz / 75.032Hz; readback matched
 `SR12=44 SR13=51`, `CR15=57 CR16=6f CR3B=e2 CR5D=01`; the full cube was
 stable and the console recovered correctly after Ctrl-C. P6f is closed.
 
+**P6 closed for the 4MB target.** David chose to skip 1024x768: two RGB555
+1024x768 color buffers plus 16-bit Z require 4,718,592 bytes before textures,
+so that mode cannot satisfy the established double-buffer+Z contract in 4MB.
+Keep the fixed timing entries and pure tests, but keep runtime rejection
+intentional. Proceed to Phase 4 (OpenGL compatibility shim).
+
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 800 600 16

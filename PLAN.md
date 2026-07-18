@@ -1040,6 +1040,13 @@ matched exactly (`SR12=44 SR13=51`, `CR15=57 CR16=6f`, `CR3B=e2`,
 `CR5D=01`). The complete cube was stable with no black band, and Ctrl-C
 restored the original 800x600 simplefb console. P6f is closed.
 
+**P6 is complete for the 4MB target card.** By project decision, skip the
+1024x768 silicon gates: two 1024x768 RGB555 color pages plus a 16-bit Z buffer
+need 4,718,592 bytes before textures, exceeding the detected 4MB VRAM. The
+fixed 1024x768 timing entries and pure encoder tests remain useful reference
+coverage, but `virge_init` intentionally rejects them rather than weakening
+the verified double-buffer+Z presentation contract. Phase 4 is next.
+
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same
 "direct interaction with the hardware" philosophy as the rest of the
@@ -1051,6 +1058,8 @@ Scope, per DB019-B (§13.4 mode setup, PDF pp. 89-101; §9 clocks, PDF
 pp. 65-67; CR67, PDF p. 216):
 - A small **fixed mode table** (640×480, 800×600, 1024×768 at 60/75Hz,
   16bpp) using canonical VESA timings — no general mode timing calculator.
+  The 1024×768 entries remain encoder-tested but are deliberately unavailable
+  on the 4MB target because the required two color pages plus Z do not fit.
 - Memory/dot clock PLL programming (SR12/SR13, plus the SR15 load
   sequence).
 - Standard VGA CRTC timing registers plus the S3 extended overflow bits

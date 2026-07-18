@@ -170,8 +170,9 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native L10GL_REFRESH=75 \
     tools/l10gl-run -- ./cube 800 600 16
 ```
 
-The 1024x768 entries remain locked pending staged validation and a 4MB
-buffer/Z policy.
+The 1024x768 entries are intentionally unavailable on the 4MB target: two
+RGB555 color pages plus a 16-bit Z buffer require 4,718,592 bytes before any
+texture allocation. Their fixed timings remain covered by encoder tests.
 
 The detach/reattach sequence follows the Linux kernel's
 [`fbcon` documentation](https://docs.kernel.org/fb/fbcon.html) and the PCI

@@ -2095,17 +2095,19 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                             "%dx%d\n", native_refresh, width, height);
             return -ENOTSUP;
         }
-        /* P6f opens 800x600@75 as a complete timing image while preserving
-         * the signed-off 60Hz clock-only transaction. Keep both 1024x768
-         * modes locked until their memory/layout gate is ready. */
+        /* P6 closes on the four hardware-verified 640/800 modes. Keep the
+         * encoded 1024x768 timings testable but unavailable at runtime: two
+         * 16-bit color pages plus 16-bit Z need 4.5MB, exceeding the target
+         * card's 4MB and violating the native double-buffer+Z contract. */
         if (!((width == 800 && height == 600 &&
                (native_refresh == 60 || native_refresh == 75)) ||
               (width == 640 && height == 480 &&
                (native_refresh == 60 || native_refresh == 75)))) {
             fprintf(stderr, "S3 ViRGE: P6 hardware gates permit only "
                             "640x480 and 800x600 at 60 or 75 Hz; "
-                            "requested %dx%d@%u. Other modes remain locked "
-                            "pending validation.\n",
+                            "requested %dx%d@%u. 1024x768 is intentionally "
+                            "disabled because double-buffered RGB555 plus "
+                            "16-bit Z exceeds 4MB.\n",
                     width, height, native_refresh);
             return -EAGAIN;
         }
