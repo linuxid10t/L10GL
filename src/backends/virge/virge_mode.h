@@ -34,6 +34,26 @@ struct virge_pll {
     uint32_t error_ppm;
 };
 
+#define VIRGE_CRTC_IMAGE_SIZE 0x70u
+#define VIRGE_SEQ_IMAGE_SIZE  0x16u
+
+struct virge_crtc_image {
+    /* value/mask pairs make reserved-bit preservation explicit. Every CRTC
+     * index with a nonzero mask must be snapshotted before the future writer
+     * applies (old & ~mask) | (value & mask). */
+    uint8_t value[VIRGE_CRTC_IMAGE_SIZE];
+    uint8_t mask[VIRGE_CRTC_IMAGE_SIZE];
+    uint8_t seq_value[VIRGE_SEQ_IMAGE_SIZE];
+    uint8_t seq_mask[VIRGE_SEQ_IMAGE_SIZE];
+    uint8_t misc_value;
+    uint8_t misc_mask;
+    uint8_t dac_mask_value;
+    uint8_t dac_mask_mask;
+    uint16_t stride;
+    uint16_t fifo_fetch;
+    struct virge_pll pll;
+};
+
 /* Return one of P6's fixed VESA timings. There is deliberately no general
  * modeline calculator in the native modeset path. */
 const struct virge_mode *virge_mode_find(unsigned width, unsigned height,
@@ -47,5 +67,13 @@ int virge_mode_validate(const struct virge_mode *mode);
  * The result is constrained to the documented M/N ranges, 135-270 MHz VCO,
  * and 0.5 percent output tolerance. */
 int virge_pll_compute(uint32_t target_khz, struct virge_pll *pll);
+
+/* Build the complete P6 16bpp VGA/extended-CRTC target image without touching
+ * hardware. The masks are also the exact CRTC snapshot descriptor for the
+ * eventual opt-in writer. Sequencer and DAC masks describe the remaining
+ * state that must be saved around PLL loading and display unblanking. */
+int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
+                            uint32_t vram_size,
+                            struct virge_crtc_image *image);
 
 #endif

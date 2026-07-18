@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "virge_mode.h"
 
@@ -154,5 +155,191 @@ int virge_pll_compute(uint32_t target_khz, struct virge_pll *pll)
     pll->sr13 = (uint8_t)best_m;
     pll->actual_khz = (uint32_t)(((uint64_t)(best_m + 2u) * ref_khz +
                                   best_den / 2u) / best_den);
+    return 0;
+}
+
+static void crtc_set(struct virge_crtc_image *image, unsigned index,
+                     uint8_t value, uint8_t mask)
+{
+    image->value[index] = value;
+    image->mask[index] = mask;
+}
+
+int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
+                            uint32_t vram_size,
+                            struct virge_crtc_image *image)
+{
+    uint32_t ht, hd, hbs, hbe, hss, hse, sff;
+    uint32_t vt, vd, vbs, vbe, vss, vse;
+    uint32_t lsw;
+    uint32_t refill;
+    uint32_t line_compare = 0x7ffu;
+    uint8_t cr07, cr09, cr5d, cr5e;
+    unsigned i;
+    int ret;
+
+    if (!image)
+        return -EINVAL;
+    ret = virge_mode_validate(mode);
+    if (ret)
+        return ret;
+    if ((stride & 7u) || stride < (uint32_t)mode->width * 2u)
+        return -EINVAL;
+    lsw = stride / 8u; /* Hardware-verified ViRGE packed-pixel pitch unit. */
+    if (lsw > 0x3ffu)
+        return -ERANGE;
+    if (vram_size < 1024u * 1024u)
+        return -ERANGE;
+
+    memset(image, 0, sizeof(*image));
+    image->stride = (uint16_t)stride;
+    ret = virge_pll_compute(mode->pixel_clock_khz, &image->pll);
+    if (ret)
+        return ret;
+
+    /* The verified 15/16bpp path uses two CRTC character clocks per normal
+     * eight-pixel VGA character: all horizontal boundaries become pixels/4.
+     * DB019-B section 16 (PDF pp.149-151) defines CR00-CR05 and section 18
+     * (PDF p.214) supplies their ninth/extra end bits in CR5D. */
+    ht = mode->htotal / 4u;
+    hd = mode->hdisplay / 4u;
+    hbs = hd;
+    /* The working BIOS-derived takeover ends blank four x2 character clocks
+     * before the counter wraps (800x600: 260 of 264), preserving the original
+     * two VGA-character margin. */
+    hbe = ht - 4u;
+    hss = mode->hsync_start / 4u;
+    hse = mode->hsync_end / 4u;
+
+    /* On the target 800x600 mode the BIOS reserved 3 us from SFF to the end
+     * of the line for FIFO refill: (264-234)*4/40MHz. Preserve that verified
+     * time budget at other clocks, rounding toward an earlier fetch. CR3B
+     * must remain inside horizontal blank (DB019-B section 18, PDF p.203). */
+    refill = (mode->pixel_clock_khz * 3u + 3999u) / 4000u;
+    if (!refill || refill >= ht - hbs)
+        return -ERANGE;
+    sff = ht - refill;
+    if (sff < hbs || sff >= hbe || sff > 0x1ffu)
+        return -ERANGE;
+    image->fifo_fetch = (uint16_t)sff;
+
+    vt = mode->vtotal - 2u;
+    vd = mode->vdisplay - 1u;
+    vbs = vd;
+    vbe = mode->vtotal - 1u;
+    vss = mode->vsync_start;
+    vse = mode->vsync_end;
+
+    cr07 = (uint8_t)((((vt >> 8) & 1u) << 0) |
+                     (((vd >> 8) & 1u) << 1) |
+                     (((vss >> 8) & 1u) << 2) |
+                     (((vbs >> 8) & 1u) << 3) |
+                     (((line_compare >> 8) & 1u) << 4) |
+                     (((vt >> 9) & 1u) << 5) |
+                     (((vd >> 9) & 1u) << 6) |
+                     (((vss >> 9) & 1u) << 7));
+    cr09 = (uint8_t)((((vbs >> 9) & 1u) << 5) |
+                     (((line_compare >> 9) & 1u) << 6));
+    cr5d = (uint8_t)(((((ht - 5u) >> 8) & 1u) << 0) |
+                     ((((hd - 1u) >> 8) & 1u) << 1) |
+                     (((hbs >> 8) & 1u) << 2) |
+                     (((hbe >> 6) & 1u) << 3) |
+                     (((hss >> 8) & 1u) << 4) |
+                     (((hse >> 5) & 1u) << 5) |
+                     (((sff >> 8) & 1u) << 6));
+    cr5e = (uint8_t)((((vt >> 10) & 1u) << 0) |
+                     (((vd >> 10) & 1u) << 1) |
+                     (((vbs >> 10) & 1u) << 2) |
+                     (((vss >> 10) & 1u) << 4) |
+                     (((line_compare >> 10) & 1u) << 6));
+
+    /* Standard VGA CRTC image. CR11 bit 7 is the final CR00-CR07 lock;
+     * the future writer must first write this byte with bit 7 clear, program
+     * CR00-CR07, then restore the encoded locked value. Vertical field and
+     * addressing definitions: DB019-B section 16, PDF pp.152-161. */
+    for (i = 0; i <= 0x18; i++)
+        image->mask[i] = 0xff;
+    image->value[0x00] = (uint8_t)(ht - 5u);
+    image->value[0x01] = (uint8_t)(hd - 1u);
+    image->value[0x02] = (uint8_t)hbs;
+    image->value[0x03] = (uint8_t)(hbe & 0x1fu);
+    image->value[0x04] = (uint8_t)hss;
+    image->value[0x05] = (uint8_t)(((hbe >> 5) & 1u) << 7 |
+                                   (hse & 0x1fu));
+    image->value[0x06] = (uint8_t)vt;
+    image->value[0x07] = cr07;
+    image->value[0x08] = 0x00; /* no preset row scan / byte pan */
+    image->value[0x09] = cr09; /* one scanline; split-screen overflow only */
+    image->value[0x0a] = 0x20; /* disable VGA text cursor */
+    image->value[0x0b] = 0x00;
+    image->value[0x0c] = 0x00; /* display start = VRAM byte offset zero */
+    image->value[0x0d] = 0x00;
+    image->value[0x0e] = 0x00;
+    image->value[0x0f] = 0x00;
+    image->value[0x10] = (uint8_t)vss;
+    image->value[0x11] = (uint8_t)(0xa0u | (vse & 0x0fu));
+    image->value[0x12] = (uint8_t)vd;
+    image->value[0x13] = (uint8_t)lsw;
+    image->value[0x14] = 0x00;
+    image->value[0x15] = (uint8_t)vbs;
+    image->value[0x16] = (uint8_t)vbe;
+    image->value[0x17] = 0xe3; /* retrace on, byte mode, linear graphics */
+    image->value[0x18] = (uint8_t)line_compare;
+
+    /* Extended packed-pixel state. Masks exclude reserved/unrelated bits and
+     * therefore double as the exact save set. CR31/CR51/CR69 clear all old
+     * display-start extensions; CR3A selects >=8bpp enhanced mode; CR34/3B
+     * enable and position FIFO fetch; CR43/51 encode pitch; CR67 selects
+     * Mode 9 RGB555 with Streams disabled. DB019-B section 18, PDF pp.192-216.
+     * CR50 pixel length is retained from the hardware-verified takeover; that
+     * register is not described in DB019-B. */
+    crtc_set(image, 0x31, 0x08, 0x38);
+    crtc_set(image, 0x33, 0x00, 0x08); /* do not invert DCLK */
+    crtc_set(image, 0x34, 0x10, 0x10);
+    crtc_set(image, 0x3a, 0x10, 0x18);
+    crtc_set(image, 0x3b, (uint8_t)sff, 0xff);
+    crtc_set(image, 0x42, 0x00, 0x20); /* progressive, not interlaced */
+    crtc_set(image, 0x43, 0x00, 0x04);
+    crtc_set(image, 0x50, 0x10, 0x30);
+    crtc_set(image, 0x51, (uint8_t)(((lsw >> 8) & 3u) << 4), 0x33);
+    crtc_set(image, 0x55, 0x00, 0x80); /* VCLK output enabled */
+    crtc_set(image, 0x56, 0x00, 0x06); /* HSYNC/VSYNC outputs enabled */
+    crtc_set(image, 0x58,
+             (uint8_t)(0x10u | (vram_size >= 4u * 1024u * 1024u ? 3u :
+                                vram_size >= 2u * 1024u * 1024u ? 2u : 1u)),
+             0x13);
+    crtc_set(image, 0x5d, cr5d, 0x7f);
+    crtc_set(image, 0x5e, cr5e, 0x57);
+    crtc_set(image, 0x67, 0x30, 0xfc);
+    crtc_set(image, 0x69, 0x00, 0x0f);
+
+    /* Misc Output: color CRTC ports, RAM enable, programmable DCLK source,
+     * and VESA sync polarities. Preserve unrelated bits 5-4. VGA polarity
+     * bits are 1 for negative sync and 0 for positive sync. */
+    image->misc_mask = 0xcf;
+    image->misc_value = 0x0f;
+    if (!(mode->sync_flags & VIRGE_MODE_HSYNC_POSITIVE))
+        image->misc_value |= 0x40;
+    if (!(mode->sync_flags & VIRGE_MODE_VSYNC_POSITIVE))
+        image->misc_value |= 0x80;
+
+    /* Extended sequencer access must be unlocked through SR08 before SR12,
+     * SR13, and SR15 are touched (DB019-B section 13.2.1, PDF p.90). SR15
+     * bit 5 is toggled 0->1->0 by the future writer to load this PLL image.
+     * The masks make all four original bytes part of the save set. */
+    image->seq_value[0x08] = 0x06;
+    image->seq_mask[0x08] = 0xff;
+    image->seq_value[0x12] = image->pll.sr12;
+    image->seq_mask[0x12] = 0x7f;
+    image->seq_value[0x13] = image->pll.sr13;
+    image->seq_mask[0x13] = 0x7f;
+    image->seq_value[0x15] = 0x00;
+    image->seq_mask[0x15] = 0x20;
+
+    /* DB019-B section 13.1 releases display blanking with DAC mask FFh after
+     * the CRTC load. Snapshot the old mask before the writer changes it. */
+    image->dac_mask_value = 0xff;
+    image->dac_mask_mask = 0xff;
+
     return 0;
 }

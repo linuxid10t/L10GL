@@ -129,6 +129,20 @@ has not changed. Next: encode the standard/extended CRTC bytes and a complete
 save/restore set as another hardware-inert, unit-tested slice before adding the
 opt-in register writer.
 
+**Phase 3 P6b implemented 2026-07-18; still no hardware writes.**
+`virge_mode_encode_16bpp` converts a fixed mode into masked values for all 25
+standard CRTC registers and 16 extended CRTC registers, plus SR08/SR12/SR13/
+SR15, Misc Output, and the DAC mask. A nonzero mask means the future writer
+must snapshot and restore that register. The encoded 800x600 state matches the
+working takeover's decisive bytes exactly, and tests decode all six images
+back to their source width, height, and pitch. Extended state explicitly
+disables interlace and clock inversion, enables sync/VCLK outputs, selects
+RGB555 Mode 9 with Streams off, clears every display-start extension, and
+sizes the linear window from detected VRAM. The CR3B policy holds the verified
+800x600 BIOS refill time at 3 us rather than applying the databook's inadequate
+"typically CR00-5" suggestion. P6c will add `L10GL_MODESET=native` and the
+ordered save/apply/restore writer; until then the existing path is unchanged.
+
 ## Test setup (fixed, do not re-derive)
 
 - Machine `david-ta970`: S3 ViRGE/DX (PCI id 0x8a01), 4MB VRAM,

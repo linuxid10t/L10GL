@@ -849,6 +849,17 @@ register writes and cannot change the proven takeover path. P6b is the pure
 CRTC encoder plus complete register snapshot/restore description; the opt-in
 writer follows only after those bytes are covered by tests.
 
+**P6b implemented 2026-07-18; still hardware-inert.** The pure encoder now
+builds a complete masked standard/extended CRTC image, sequencer PLL/unlock
+image, Misc Output value, and DAC mask for any fixed 16bpp mode. Nonzero masks
+are the exact register snapshot set the eventual writer must restore. The
+800x600 image reproduces the silicon-verified takeover values (`CR00=03`,
+`CR01=c7`, `CR13=c8`, `CR3B=ea`, `CR5D=21`, `CR67=30`); every fixed mode
+round-trips through the encoded overflow fields to its requested geometry and
+pitch. The FIFO-fetch policy preserves the target BIOS mode's verified 3 us
+refill interval at each dot clock. P6c is the opt-in save/apply/restore writer;
+only its first conservative 640x480@60 clock step requires hardware sign-off.
+
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same
 "direct interaction with the hardware" philosophy as the rest of the
