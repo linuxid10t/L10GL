@@ -701,7 +701,7 @@ end state, but the riskiest register work in the whole plan).
 
 ### P1. Mode negotiation and fbdev mode setting (all backends)
 
-**Implemented and software-verified 2026-07-18; fbdev hardware sign-off
+**Implemented and native-ViRGE-verified 2026-07-18; fbdev mode-switch sign-off
 pending.** `l10gl_ctx` now publishes authoritative stride and packed channel
 layout in addition to actual geometry. A shared fbdev path reads both fixed and
 variable mode data, attempts `FBIOPUT_VSCREENINFO` when geometry/depth/required
@@ -711,9 +711,10 @@ RGB555 destination layout; MGA-1064 uses real padded pitch for engine and Z
 layout; swrast accepts the live packed channel layout. Offscreen and native
 ViRGE-takeover modes publish the same contract without fbdev. `test-mode`
 covers standard layouts, matching, padded strides, actual-mode publication,
-and frontend validation. The primary ViRGE machine's no-fbdev path still needs
-its normal regression run, while actual `FBIOPUT_VSCREENINFO` acceptance needs
-a machine booted with `s3fb`/`matroxfb`.
+and frontend validation. David confirmed the primary ViRGE/DX machine's
+no-fbdev native takeover still works without regressions after P1. Actual
+`FBIOPUT_VSCREENINFO` acceptance still needs a machine booted with
+`s3fb`/`matroxfb`.
 
 Change the init contract: `width/height/bpp` passed to `l10gl_create` are
 a *request*, and the backend reports what it actually got. Concretely:

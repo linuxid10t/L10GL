@@ -20,6 +20,7 @@ of VRAM. The following paths are verified on silicon:
 - depth-test, depth-mask, and depth-function state plumbing
 - 2D rectangle fills
 - native RGB555 scanout takeover when no fbdev driver owns the card
+- P1 requested/actual geometry and stride publication on native takeover
 - double-buffered, vsync-synchronized page flips
 
 The X6 model-space `cube` and `textured_cube` ports render correctly and
