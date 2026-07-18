@@ -177,15 +177,24 @@ the active VT so the kernel-retained text overwrites L10GL's stale color/Z
 pixels. The 800x600 PLL and restore gate is closed; enable 640x480@60 next as
 the first real resolution-change test.
 
-**P6d 640x480@60 gate implemented; silicon validation pending.** The backend
-now allows that mode under `L10GL_MODESET=native` and applies the complete
+**P6d 640x480@60 gate implemented; corrected clock-source validation
+pending.** The backend now allows that mode under `L10GL_MODESET=native` and applies the complete
 databook-derived CRTC image rather than the 800x600 clock gate's restricted
 live-raster subset. Unit tests pin all 25 standard bytes plus CR5D/CR5E, pitch,
-sync polarity, FIFO fetch, and `SR12=67`/`SR13=7d` for a computed 25.255MHz
-DCLK. DB019-B CR18 and its CR07/CR09 overflow fields only require line compare
+sync polarity, FIFO fetch, and the exact built-in 25.175MHz VGA DCLK selected
+by Misc Output bits 3-2=`00`. DB019-B CR18 and its CR07/CR09 overflow fields
+only require line compare
 to be beyond the visible raster; using standard `0x3ff` disables split-screen
-for every supported mode without unnecessarily setting ViRGE CR5E bit 6. Run
-over SSH from a clean console baseline:
+for every supported mode without unnecessarily setting ViRGE CR5E bit 6.
+The first hardware attempt used programmable source `11` with a synthesized
+25.255MHz DCLK and produced the monitor's out-of-range warning even though all
+CRTC bytes read back. DB019-B section 9.2 explicitly provides standard
+25.175MHz through fixed source `00` and requires SR15.1 during fixed-clock
+selection. The corrected gate now uses that path, snapshots SR15.1, and still
+restores the old SR12/SR13/SR15 state because selecting a fixed clock may
+replace the PLL parameter bytes implicitly.
+
+Run over SSH from a clean console baseline:
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \

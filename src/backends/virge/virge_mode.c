@@ -199,9 +199,17 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
 
     memset(image, 0, sizeof(*image));
     image->stride = (uint16_t)stride;
-    ret = virge_pll_compute(mode->pixel_clock_khz, &image->pll);
-    if (ret)
-        return ret;
+    image->builtin_dclk_25175 = mode->pixel_clock_khz == 25175u;
+    if (image->builtin_dclk_25175) {
+        /* DB019-B section 9.2 specifies 25.175 MHz as a dedicated VGA DCLK
+         * selected by Misc Output clock bits 00. Do not synthesize an
+         * approximation through SR12/SR13 for the standard VGA mode. */
+        image->pll.actual_khz = 25175u;
+    } else {
+        ret = virge_pll_compute(mode->pixel_clock_khz, &image->pll);
+        if (ret)
+            return ret;
+    }
 
     /* The verified 15/16bpp path uses two CRTC character clocks per normal
      * eight-pixel VGA character: all horizontal boundaries become pixels/4.
@@ -320,11 +328,12 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     crtc_set(image, 0x67, 0x30, 0xfc);
     crtc_set(image, 0x69, 0x00, 0x0f);
 
-    /* Misc Output: color CRTC ports, RAM enable, programmable DCLK source,
-     * and VESA sync polarities. Preserve unrelated bits 5-4. VGA polarity
-     * bits are 1 for negative sync and 0 for positive sync. */
+    /* Misc Output: color CRTC ports, RAM enable, DCLK source, and VESA sync
+     * polarities. Clock select 00 is the exact built-in 25.175 MHz VGA DCLK;
+     * 11 selects programmable SR12/SR13. Preserve unrelated bits 5-4. VGA
+     * polarity bits are 1 for negative sync and 0 for positive sync. */
     image->misc_mask = 0xcf;
-    image->misc_value = 0x0f;
+    image->misc_value = image->builtin_dclk_25175 ? 0x03 : 0x0f;
     if (!(mode->sync_flags & VIRGE_MODE_HSYNC_POSITIVE))
         image->misc_value |= 0x40;
     if (!(mode->sync_flags & VIRGE_MODE_VSYNC_POSITIVE))
@@ -344,8 +353,11 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     image->seq_mask[0x12] = 0x7f;
     image->seq_value[0x13] = image->pll.sr13;
     image->seq_mask[0x13] = 0x7f;
-    image->seq_value[0x15] = 0x00;
-    image->seq_mask[0x15] = 0x20;
+    /* Fixed VGA clocks load when SR15.1 is set; programmable clocks are
+     * loaded immediately by pulsing SR15.5. Include every bit changed by
+     * either path in the snapshot descriptor. */
+    image->seq_value[0x15] = image->builtin_dclk_25175 ? 0x02 : 0x00;
+    image->seq_mask[0x15] = image->builtin_dclk_25175 ? 0x22 : 0x20;
 
     /* DB019-B section 13.1 releases display blanking with DAC mask FFh after
      * the CRTC load. Snapshot the old mask before the writer changes it. */

@@ -907,16 +907,25 @@ firmware/simplefb baseline, the same P6 run rendered correctly and returned to
 a correct framebuffer console. The 800x600 PLL/save/restore gate is closed;
 640x480@60 is now the next P6 resolution-change gate.
 
-**P6d 640x480@60 resolution gate implemented 2026-07-18; silicon validation
-pending.** The opt-in native path now admits 640x480 alongside the verified
-800x600 clock gate. Unlike 800x600, 640x480 applies the complete standard and
+**P6d 640x480@60 resolution gate implemented 2026-07-18; corrected
+clock-source validation pending.** The opt-in native path now admits 640x480
+alongside the verified 800x600 clock gate. Unlike 800x600, 640x480 applies the complete standard and
 extended CRTC image because it is a real raster change. The image is locked by
 tests to DB019-B's exact field encodings: CR00-CR18, CR5D/CR5E overflow, pitch,
-negative sync polarity, the 25.175MHz PLL (`SR12=67`, `SR13=7d`, actual
-25.255MHz), and the 3us FIFO-refill budget. The split-screen line compare was
-reduced from the unnecessary ViRGE-extended `0x7ff` to standard VGA `0x3ff`;
+negative sync polarity, the exact built-in 25.175MHz VGA DCLK, and the 3us
+FIFO-refill budget. The split-screen line compare was reduced from the
+unnecessary ViRGE-extended `0x7ff` to standard VGA `0x3ff`;
 all supported rasters are shorter than 1024 lines, this keeps split-screen
 disabled, and it preserves `CR5E=00` as observed in the proven live mode.
+The first silicon run reached the programmed CRTC image but the monitor
+reported out of range. DB019-B section 9.2 identifies the cause in the clock
+selection: standard 25.175MHz is a dedicated VGA DCLK selected by Misc Output
+bits 3-2=`00`, while the first image had needlessly selected programmable PLL
+source `11` and synthesized 25.255MHz. The corrected image selects the exact
+built-in clock and sets SR15.1 while selecting it, as the same section
+requires. SR12/SR13/SR15 remain fully saved and restored because fixed-clock
+selection can update the PLL parameter registers implicitly.
+
 75Hz and 1024x768 remain locked. Hardware test over SSH:
 
 ```

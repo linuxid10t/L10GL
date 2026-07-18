@@ -194,6 +194,8 @@ static void test_crtc_image(void)
     EXPECT(image.value[0x58] == 0x13 && image.misc_value == 0x0f &&
            image.misc_mask == 0xcf,
            "4MB linear window and positive sync");
+    EXPECT(!image.builtin_dclk_25175,
+           "800x600 uses programmable DCLK");
     EXPECT(image.seq_mask[0x01] == 0x20 &&
            image.seq_value[0x08] == 0x06 &&
            image.seq_value[0x12] == image.pll.sr12 &&
@@ -214,8 +216,9 @@ static void test_crtc_image(void)
     mode = virge_mode_find(640, 480, 60);
     EXPECT(virge_mode_encode_16bpp(mode, 1280, 2u * 1024u * 1024u,
                                    &image) == 0 &&
-           image.value[0x58] == 0x12 && image.misc_value == 0xcf,
-           "2MB window and negative sync encoding");
+           image.value[0x58] == 0x12 && image.misc_value == 0xc3 &&
+           image.builtin_dclk_25175,
+           "2MB window, negative sync, and built-in VGA DCLK encoding");
     {
         static const uint8_t expected_standard[25] = {
             0xc3, 0x9f, 0xa0, 0x04, 0xa4, 0x1c, 0x0b, 0x3e,
@@ -232,8 +235,11 @@ static void test_crtc_image(void)
            image.value[0x5d] == 0x28 && image.value[0x5e] == 0x00,
            "640x480 FIFO and extended overflow bytes");
     EXPECT(image.value[0x13] == 0xa0 && image.value[0x51] == 0x00 &&
-           image.pll.sr12 == 0x67 && image.pll.sr13 == 0x7d,
-           "640x480 pitch and 25.175MHz PLL bytes");
+           image.pll.actual_khz == 25175 && image.pll.error_ppm == 0,
+           "640x480 pitch and exact built-in 25.175MHz clock");
+    EXPECT(image.seq_value[0x15] == 0x02 &&
+           image.seq_mask[0x15] == 0x22,
+           "built-in VGA DCLK enable is included in save image");
     EXPECT(virge_mode_encode_16bpp(mode, 1279, 2u * 1024u * 1024u,
                                    &image) == -EINVAL,
            "reject unaligned pitch");

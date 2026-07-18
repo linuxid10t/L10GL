@@ -151,8 +151,10 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
 ```
 
 This is the first true resolution change and uses the complete fixed CRTC
-image. The 75Hz and 1024x768 entries remain locked pending staged hardware
-validation.
+image plus the ViRGE's exact built-in 25.175MHz VGA clock. Its corrected
+clock-source path is awaiting hardware validation after the initial
+programmable-PLL attempt produced an out-of-range signal. The 75Hz and
+1024x768 entries remain locked pending staged hardware validation.
 
 The detach/reattach sequence follows the Linux kernel's
 [`fbcon` documentation](https://docs.kernel.org/fb/fbcon.html) and the PCI

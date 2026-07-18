@@ -51,6 +51,9 @@ struct virge_crtc_image {
     uint8_t dac_mask_mask;
     uint16_t stride;
     uint16_t fifo_fetch;
+    /* 25.175 MHz is a dedicated VGA clock source selected directly through
+     * Misc Output. Other fixed modes use the programmable DCLK PLL. */
+    uint8_t builtin_dclk_25175;
     struct virge_pll pll;
 };
 

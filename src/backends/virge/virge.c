@@ -602,7 +602,8 @@ static void virge_native_mode_restore(struct virge_ctx *ctx)
     printf("S3 ViRGE: P6 restore readback: CR00=%02x CR01=%02x CR06=%02x "
            "CR07=%02x CR12=%02x CR13=%02x CR15=%02x CR16=%02x "
            "CR3B=%02x CR5D=%02x CR5E=%02x CR67=%02x "
-           "start=%02x:%02x:%02x SR12=%02x SR13=%02x\n",
+           "start=%02x:%02x:%02x Misc=%02x SR12=%02x SR13=%02x "
+           "SR15=%02x\n",
            vga_crtc_read(0x00), vga_crtc_read(0x01),
            vga_crtc_read(0x06), vga_crtc_read(0x07),
            vga_crtc_read(0x12), vga_crtc_read(0x13),
@@ -611,7 +612,8 @@ static void virge_native_mode_restore(struct virge_ctx *ctx)
            vga_crtc_read(0x5e), vga_crtc_read(0x67),
            vga_crtc_read(0x69), vga_crtc_read(0x0c),
            vga_crtc_read(0x0d),
-           vga_seq_read(0x12), vga_seq_read(0x13));
+           inb(0x3cc), vga_seq_read(0x12), vga_seq_read(0x13),
+           vga_seq_read(0x15));
     outb(ctx->saved_native_dac_mask, 0x3C6);
     vga_seq_write(0x01, ctx->saved_native_seq[0x01]);
     vga_seq_write(0x08, ctx->saved_native_seq[0x08]);
@@ -669,25 +671,43 @@ static int virge_native_mode_apply(struct virge_ctx *ctx,
         printf("S3 ViRGE: P6 resolution gate will replace the complete "
                "live CRTC timing image\n");
     }
-    printf("S3 ViRGE: P6 native mode: %ux%u@%u RGB555, DCLK target %u "
-           "kHz -> %u kHz (SR12=%02x SR13=%02x, %u ppm)\n",
-           mode->width, mode->height, mode->refresh_hz,
-           mode->pixel_clock_khz, image->pll.actual_khz,
-           image->pll.sr12, image->pll.sr13, image->pll.error_ppm);
+    if (image->builtin_dclk_25175) {
+        printf("S3 ViRGE: P6 native mode: %ux%u@%u RGB555, exact built-in "
+               "25.175 MHz VGA DCLK (Misc clock select 00)\n",
+               mode->width, mode->height, mode->refresh_hz);
+    } else {
+        printf("S3 ViRGE: P6 native mode: %ux%u@%u RGB555, DCLK target %u "
+               "kHz -> %u kHz (SR12=%02x SR13=%02x, %u ppm)\n",
+               mode->width, mode->height, mode->refresh_hz,
+               mode->pixel_clock_khz, image->pll.actual_khz,
+               image->pll.sr12, image->pll.sr13, image->pll.error_ppm);
+    }
 
-    /* Blank first, then load the programmable DCLK immediately. */
+    /* Blank first, then select the clock. DB019-B section 9.2 says Misc
+     * clock select 00 directly chooses the standard 25.175 MHz VGA DCLK.
+     * Only the 11 path needs SR12/SR13 followed by an SR15.5 load pulse. */
     vga_seq_write(0x01, (uint8_t)(ctx->saved_native_seq[0x01] | 0x20));
-    target = merge_masked(ctx->saved_native_seq[0x12],
-                          image->seq_value[0x12], image->seq_mask[0x12]);
-    vga_seq_write(0x12, target);
-    target = merge_masked(ctx->saved_native_seq[0x13],
-                          image->seq_value[0x13], image->seq_mask[0x13]);
-    vga_seq_write(0x13, target);
-    outb(merge_masked(ctx->saved_native_misc, image->misc_value,
-                      image->misc_mask), 0x3C2);
-    sr15 = (uint8_t)(ctx->saved_native_seq[0x15] & ~0x20);
-    vga_seq_write(0x15, (uint8_t)(sr15 | 0x20));
-    vga_seq_write(0x15, sr15);
+    if (!image->builtin_dclk_25175) {
+        target = merge_masked(ctx->saved_native_seq[0x12],
+                              image->seq_value[0x12], image->seq_mask[0x12]);
+        vga_seq_write(0x12, target);
+        target = merge_masked(ctx->saved_native_seq[0x13],
+                              image->seq_value[0x13], image->seq_mask[0x13]);
+        vga_seq_write(0x13, target);
+        outb(merge_masked(ctx->saved_native_misc, image->misc_value,
+                          image->misc_mask), 0x3C2);
+        sr15 = (uint8_t)(ctx->saved_native_seq[0x15] & ~0x20);
+        vga_seq_write(0x15, (uint8_t)(sr15 | 0x20));
+        vga_seq_write(0x15, sr15);
+    } else {
+        /* Fixed clock selection is loaded only while DFRQ EN (SR15.1) is
+         * set. DB019-B recommends setting it at power-up and leaving it set,
+         * but we cannot assume the firmware state; restore saves it exactly. */
+        sr15 = (uint8_t)((ctx->saved_native_seq[0x15] & ~0x20) | 0x02);
+        vga_seq_write(0x15, sr15);
+        outb(merge_masked(ctx->saved_native_misc, image->misc_value,
+                          image->misc_mask), 0x3C2);
+    }
 
     /* Unlock each timing-lock layer owned by the image, apply the masked
      * image, then install CR11's encoded lock bit. The first gate deliberately
@@ -731,7 +751,8 @@ static int virge_native_mode_apply(struct virge_ctx *ctx,
     }
     for (i = 0; i < VIRGE_SEQ_IMAGE_SIZE; i++) {
         uint8_t actual;
-        if (!image->seq_mask[i] || i == 0x01 || i == 0x08 || i == 0x15)
+        if (!image->seq_mask[i] || i == 0x01 || i == 0x08 ||
+            (image->builtin_dclk_25175 && (i == 0x12 || i == 0x13)))
             continue;
         actual = vga_seq_read((uint8_t)i);
         target = merge_masked(ctx->saved_native_seq[i], image->seq_value[i],
@@ -775,7 +796,8 @@ static int virge_native_mode_apply(struct virge_ctx *ctx,
     printf("S3 ViRGE: P6 readback: CR00=%02x CR01=%02x CR06=%02x "
            "CR07=%02x CR12=%02x CR13=%02x CR15=%02x CR16=%02x "
            "CR3B=%02x CR5D=%02x CR5E=%02x CR67=%02x "
-           "start=%02x:%02x:%02x\n",
+           "start=%02x:%02x:%02x Misc=%02x SR12=%02x SR13=%02x "
+           "SR15=%02x\n",
            vga_crtc_read(0x00), vga_crtc_read(0x01),
            vga_crtc_read(0x06), vga_crtc_read(0x07),
            vga_crtc_read(0x12), vga_crtc_read(0x13),
@@ -783,7 +805,8 @@ static int virge_native_mode_apply(struct virge_ctx *ctx,
            vga_crtc_read(0x3b), vga_crtc_read(0x5d),
            vga_crtc_read(0x5e), vga_crtc_read(0x67),
            vga_crtc_read(0x69), vga_crtc_read(0x0c),
-           vga_crtc_read(0x0d));
+           vga_crtc_read(0x0d), inb(0x3cc), vga_seq_read(0x12),
+           vga_seq_read(0x13), vga_seq_read(0x15));
     return 0;
 }
 
