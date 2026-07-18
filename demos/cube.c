@@ -16,6 +16,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <signal.h>
+#include <limits.h>
 
 #include "l10gl.h"
 
@@ -137,6 +138,22 @@ static void sighandler(int sig)
     running = 0;
 }
 
+static int frame_limit_from_env(void)
+{
+    const char *value = getenv("L10GL_FRAMES");
+    char *end;
+    long limit;
+
+    if (!value || !value[0])
+        return 0;
+    limit = strtol(value, &end, 10);
+    if (*end || limit <= 0 || limit > INT_MAX) {
+        fprintf(stderr, "Ignoring invalid L10GL_FRAMES='%s'\n", value);
+        return 0;
+    }
+    return (int)limit;
+}
+
 int main(int argc, char **argv)
 {
     int width = 640;
@@ -181,6 +198,7 @@ int main(int argc, char **argv)
      * cube's "blacked out below ~2/5" is a render limit or vsync-less
      * single-buffer tearing (a static frame has no re-clear cycle). */
     int static_mode = getenv("L10GL_STATIC") != NULL;
+    int frame_limit = frame_limit_from_env();
 
     /* Set clear values */
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);   /* black background */
@@ -193,8 +211,11 @@ int main(int argc, char **argv)
     float angle = 0.0f;
     int frame = 0;
 
-    printf("Rendering... (Ctrl-C to exit)%s\n",
+    printf("Rendering... (Ctrl-C to exit)%s",
            static_mode ? "  [L10GL_STATIC: one frame, then idle]" : "");
+    if (frame_limit)
+        printf("  [L10GL_FRAMES=%d]", frame_limit);
+    putchar('\n');
 
     while (running) {
         float rot[3][3];
@@ -277,8 +298,14 @@ int main(int argc, char **argv)
         l10gl_wait_engine(&ctx);
         l10gl_swap_buffers(&ctx);   /* tear-free: publish frame at vblank, flip render target */
 
+        frame++;
+        if (frame_limit && frame >= frame_limit) {
+            printf("Frame limit reached.\n");
+            break;
+        }
+
         if (static_mode) {
-            printf("Static frame %d rendered. Ctrl-C to exit.\n", frame);
+            printf("Static frame rendered. Ctrl-C to exit.\n");
             while (running)
                 usleep(100000);
             break;
@@ -288,7 +315,6 @@ int main(int argc, char **argv)
         if (angle > 2.0f * PI)
             angle -= 2.0f * PI;
 
-        frame++;
         if (frame % 60 == 0)
             printf("Frame %d\n", frame);
     }

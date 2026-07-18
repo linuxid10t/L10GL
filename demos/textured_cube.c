@@ -2,8 +2,8 @@
  * textured_cube.c - Spinning textured cube demo using L10GL.
  *
  * Hardware-agnostic — uses the L10GL frontend API. The backend is selected
- * at runtime. If the backend supports texture mapping (ViRGE), it
- * uses hardware textured triangles. If not (MGA-1064SG), it silently
+ * at runtime. If the backend supports texture mapping, it uses textured
+ * triangles. If not (currently MGA-1064SG), it silently
  * falls back to Gouraud shading.
  *
  * Build: make DEMO=textured_cube
@@ -18,6 +18,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <signal.h>
+#include <limits.h>
 
 #include "l10gl.h"
 
@@ -187,6 +188,22 @@ static void sighandler(int sig)
     running = 0;
 }
 
+static int frame_limit_from_env(void)
+{
+    const char *value = getenv("L10GL_FRAMES");
+    char *end;
+    long limit;
+
+    if (!value || !value[0])
+        return 0;
+    limit = strtol(value, &end, 10);
+    if (*end || limit <= 0 || limit > INT_MAX) {
+        fprintf(stderr, "Ignoring invalid L10GL_FRAMES='%s'\n", value);
+        return 0;
+    }
+    return (int)limit;
+}
+
 int main(int argc, char **argv)
 {
     int width = 640;
@@ -213,7 +230,8 @@ int main(int argc, char **argv)
     int has_texture = (ctx.backend->caps & L10GL_CAP_TEXTURE) != 0;
     printf("Selected backend: %s\n", ctx.backend->name);
     printf("Texture mapping: %s\n",
-           has_texture ? "hardware" : "not supported, using Gouraud fallback");
+           has_texture ? "supported by backend"
+                       : "not supported, using Gouraud fallback");
 
     /* The backend may adopt the real screen mode instead of the request
      * (native scanout takeover on no-fbdev machines) -- render to what
@@ -276,8 +294,12 @@ int main(int argc, char **argv)
 
     float angle = 0.0f;
     int frame = 0;
+    int frame_limit = frame_limit_from_env();
 
-    printf("Rendering... (Ctrl-C to exit)\n");
+    printf("Rendering... (Ctrl-C to exit)");
+    if (frame_limit)
+        printf("  [L10GL_FRAMES=%d]", frame_limit);
+    putchar('\n');
 
     while (running) {
         float rot[3][3];
@@ -352,11 +374,16 @@ int main(int argc, char **argv)
         l10gl_wait_engine(&ctx);
         l10gl_swap_buffers(&ctx);   /* tear-free: publish frame at vblank, flip render target */
 
+        frame++;
+        if (frame_limit && frame >= frame_limit) {
+            printf("Frame limit reached.\n");
+            break;
+        }
+
         angle += 0.02f;
         if (angle > 2.0f * PI)
             angle -= 2.0f * PI;
 
-        frame++;
         if (frame % 60 == 0)
             printf("Frame %d\n", frame);
     }
