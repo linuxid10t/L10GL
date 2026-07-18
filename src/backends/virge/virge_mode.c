@@ -57,7 +57,8 @@ int virge_mode_validate(const struct virge_mode *mode)
     /* At 16bpp the hardware-verified path doubles the VGA horizontal
      * counters, so each timing boundary must be an integral 8-pixel VGA
      * character before the x2 conversion. DB019-B section 16, PDF pp.149-151
-     * documents the 9-bit horizontal fields and CR5D extensions. */
+     * documents the 9-bit horizontal fields and CR5D extensions. Pulse-length
+     * extensions are validated separately by the encoder. */
     if ((mode->hdisplay | mode->hsync_start | mode->hsync_end |
          mode->htotal) & 7u)
         return -ERANGE;
@@ -66,6 +67,10 @@ int virge_mode_validate(const struct virge_mode *mode)
         mode->vtotal - 2u > 0x7ffu ||
         mode->vdisplay - 1u > 0x7ffu ||
         mode->vsync_start > 0x7ffu)
+        return -ERANGE;
+    if ((uint32_t)mode->htotal - mode->hdisplay <= 16u ||
+        ((uint32_t)mode->htotal - 16u - mode->hdisplay) / 4u > 128u ||
+        ((uint32_t)mode->hsync_end - mode->hsync_start) / 4u > 64u)
         return -ERANGE;
 
     /* Reject a mislabeled fixed entry. Allow two percent for nominal refresh
@@ -214,7 +219,8 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     /* The verified 15/16bpp path uses two CRTC character clocks per normal
      * eight-pixel VGA character: all horizontal boundaries become pixels/4.
      * DB019-B section 16 (PDF pp.149-151) defines CR00-CR05 and section 18
-     * (PDF p.214) supplies their ninth/extra end bits in CR5D. */
+     * (PDF p.214) supplies ninth position bits plus separate pulse-length
+     * extensions in CR5D. */
     ht = mode->htotal / 4u;
     hd = mode->hdisplay / 4u;
     hbs = hd;
@@ -257,9 +263,9 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
     cr5d = (uint8_t)(((((ht - 5u) >> 8) & 1u) << 0) |
                      ((((hd - 1u) >> 8) & 1u) << 1) |
                      (((hbs >> 8) & 1u) << 2) |
-                     (((hbe >> 6) & 1u) << 3) |
+                     (((hbe - hbs) > 64u) << 3) |
                      (((hss >> 8) & 1u) << 4) |
-                     (((hse >> 5) & 1u) << 5) |
+                     (((hse - hss) > 32u) << 5) |
                      (((sff >> 8) & 1u) << 6));
     cr5e = (uint8_t)((((vt >> 10) & 1u) << 0) |
                      (((vd >> 10) & 1u) << 1) |
@@ -308,10 +314,10 @@ int virge_mode_encode_16bpp(const struct virge_mode *mode, uint32_t stride,
      * CR50 pixel length is retained from the hardware-verified takeover; that
      * register is not described in DB019-B. */
     crtc_set(image, 0x31, 0x08, 0x38);
-    /* Force VCLK from the internal DCLK. CR33.3=0 permits an external
-     * feature-connector VCLK when that path is enabled; CR33.3=1 explicitly
-     * selects inverted internal DCLK (DB019-B section 18, PDF p.194). */
-    crtc_set(image, 0x33, 0x08, 0x08);
+    /* Linux s3fb uses the normal, non-DDR VCLK path for ViRGE high color.
+     * SR0D below independently disables feature-connector direction control,
+     * so CR33.3=0 selects internal DCLK without forcing an inverted clock. */
+    crtc_set(image, 0x33, 0x00, 0x08);
     crtc_set(image, 0x34, 0x10, 0x10);
     crtc_set(image, 0x35, 0x00, 0x30); /* timing registers unlocked */
     crtc_set(image, 0x3a, 0x10, 0x18);
@@ -410,6 +416,12 @@ void virge_mode_limit_first_gate(struct virge_crtc_image *image)
     image->misc_mask &= 0x0fu;
     image->feature_mask = 0;
     image->seq_mask[0x0d] = 0;
+
+    /* Preserve P6c's silicon-verified 800x600 byte exactly. The complete
+     * encoder clears CR5D.5 per Linux s3fb because it is a pulse-length
+     * extension, not an absolute sync-end bit; the clock-only gate must not
+     * silently revise its already accepted takeover waveform. */
+    image->value[0x5d] |= 0x20;
 
     /* Preserve CR11's interrupt/retrace bits; only its timing lock is part of
      * this transaction. CR35 is deliberately absent because the proven

@@ -186,12 +186,12 @@ static void test_crtc_image(void)
     EXPECT(image.value[0x13] == 0xc8 && image.value[0x17] == 0xe3,
            "800x600 pitch and addressing");
     EXPECT(image.value[0x3b] == 0xea && image.fifo_fetch == 234 &&
-           image.value[0x5d] == 0x21,
-           "hardware-verified 800x600 x2/SFF bytes");
-    EXPECT(image.value[0x33] == 0x08 && image.value[0x50] == 0x10 &&
+           image.value[0x5d] == 0x01,
+           "800x600 x2/SFF bytes without false pulse extensions");
+    EXPECT(image.value[0x33] == 0x00 && image.value[0x50] == 0x10 &&
            image.value[0x51] == 0x00 &&
            image.value[0x67] == 0x30,
-           "internal VCLK, RGB555 pixel length, and scanout mode");
+           "normal VCLK, RGB555 pixel length, and scanout mode");
     EXPECT(image.value[0x58] == 0x13 && image.misc_value == 0x0f &&
            image.misc_mask == 0xcf,
            "4MB linear window and positive sync");
@@ -236,7 +236,7 @@ static void test_crtc_image(void)
                    "640x480 standard CRTC byte matches DB019-B encoding");
     }
     EXPECT(image.value[0x3b] == 0xb5 && image.fifo_fetch == 181 &&
-           image.value[0x5d] == 0x28 && image.value[0x5e] == 0x00,
+           image.value[0x5d] == 0x00 && image.value[0x5e] == 0x00,
            "640x480 FIFO and extended overflow bytes");
     EXPECT(image.value[0x13] == 0xa0 && image.value[0x51] == 0x00 &&
            image.pll.actual_khz == 25175 && image.pll.error_ppm == 0,
@@ -256,6 +256,12 @@ static void test_crtc_image(void)
     EXPECT(virge_mode_encode_16bpp(mode, 1280, 2u * 1024u * 1024u,
                                    NULL) == -EINVAL,
            "reject null CRTC image");
+
+    mode = virge_mode_find(1024, 768, 60);
+    EXPECT(virge_mode_encode_16bpp(mode, 2048, 4u * 1024u * 1024u,
+                                   &image) == 0 &&
+           (image.value[0x5d] & 0x28) == 0x28,
+           "pulse extensions are used only for widths beyond base wrapping fields");
 }
 
 static void test_first_gate_image(void)
@@ -289,6 +295,8 @@ static void test_first_gate_image(void)
            "first gate changes DCLK select without changing sync polarity");
     EXPECT(image.feature_mask == 0 && image.seq_mask[0x0d] == 0,
            "first gate preserves live external sync routing");
+    EXPECT(image.value[0x5d] == 0x21,
+           "first gate preserves silicon-verified CR5D pulse byte");
     EXPECT(image.seq_mask[0x12] && image.seq_mask[0x13] &&
            image.seq_mask[0x15],
            "first gate retains programmable DCLK load sequence");

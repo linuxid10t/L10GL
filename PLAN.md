@@ -948,6 +948,19 @@ and clears Feature Control bit 3 so VSYNC cannot be ORed with active display.
 All three states are snapshotted, verified, logged, and restored. The verified
 800x600 clock-only gate explicitly excludes these new writes.
 
+That external-path run still failed; its inherited state was already normal
+(`FCR=00`, `SR0D=02`, `CR33=00`, `CR56=00`), and forcing CR33.3 made no
+difference. Linux `drivers/video/fbdev/s3fb.c` then exposed the actual pulse
+encoding error: it explicitly clears CR5D bits 3/5 as length extensions and
+omits them from its horizontal blank/sync end field maps. That agrees with
+DB019-B Table 14-1 and CR5D: bit 3 extends blank by 64 DCLKs and bit 5 extends
+HSYNC by 32 DCLKs. They are not high bits of absolute end positions. P6d had
+encoded 640x480 as `CR5D=28`, incorrectly adding both extensions even though
+the desired blank and sync widths fit the base wrapping fields. The corrected
+640 image is `CR5D=00`; CR33 returns to s3fb's normal non-DDR value. P6c's
+already-accepted 800 clock-only gate retains `CR5D=21` explicitly so this
+correction cannot silently change that signed-off path.
+
 75Hz and 1024x768 remain locked. Hardware test over SSH:
 
 ```

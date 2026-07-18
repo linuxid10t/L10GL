@@ -213,6 +213,17 @@ cleared to prevent VSYNC from being ORed with active display. Each added byte
 is saved, read back, logged, and restored. `virge_mode_limit_first_gate`
 removes these additions from the already-verified 800x600 clock-only path.
 
+That external-path gate also remained out of sync. The inherited external
+state was already normal, and forcing CR33.3 changed nothing. The decisive
+behavioral reference is Linux `drivers/video/fbdev/s3fb.c`: it clears CR5D
+bits 3/5 as pulse-length extensions and excludes them from the horizontal
+blank/sync end-position mappings. DB019-B Table 14-1 and CR5D agree that these
+bits add 64 DCLKs of blank and 32 DCLKs of HSYNC; they are not ordinary high
+end-position bits. P6d's `CR5D=28` therefore made both 640x480 pulses far too
+long while leaving their measured periods correct. The pending image uses
+`CR5D=00` and restores s3fb's normal `CR33.3=0`. The P6c 800x600 clock-only
+limiter explicitly retains its silicon-verified `CR5D=21` byte.
+
 Run over SSH from a clean console baseline:
 
 ```
