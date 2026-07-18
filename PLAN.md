@@ -691,8 +691,8 @@ remains in the demo files beyond scene description.
 
 ## Phase 3 — Presentation: mode setting, double buffering, vsync flip
 
-Currently the driver draws straight to the scanout buffer of whatever mode
-the console happens to be in, and trusts the caller that it *is* that mode.
+The P1 mode contract is now implemented; P2 console ownership/restore remains
+the next step. P3/P4 ViRGE swapping landed earlier in bring-up.
 This phase makes the display pipe a first-class part of the driver: adopt
 or set the video mode, own the console politely, and add back-buffer
 flipping. Mode setting is staged — fbdev-mediated first (small, portable,
@@ -700,6 +700,21 @@ works today), native CRTC programming last (the true "direct hardware"
 end state, but the riskiest register work in the whole plan).
 
 ### P1. Mode negotiation and fbdev mode setting (all backends)
+
+**Implemented and software-verified 2026-07-18; fbdev hardware sign-off
+pending.** `l10gl_ctx` now publishes authoritative stride and packed channel
+layout in addition to actual geometry. A shared fbdev path reads both fixed and
+variable mode data, attempts `FBIOPUT_VSCREENINFO` when geometry/depth/required
+channels differ, re-reads the result, and rejects ignored or unusable modes
+with the live mode and an example `fbset` command. ViRGE requires its fixed
+RGB555 destination layout; MGA-1064 uses real padded pitch for engine and Z
+layout; swrast accepts the live packed channel layout. Offscreen and native
+ViRGE-takeover modes publish the same contract without fbdev. `test-mode`
+covers standard layouts, matching, padded strides, actual-mode publication,
+and frontend validation. The primary ViRGE machine's no-fbdev path still needs
+its normal regression run, while actual `FBIOPUT_VSCREENINFO` acceptance needs
+a machine booted with `s3fb`/`matroxfb`.
+
 Change the init contract: `width/height/bpp` passed to `l10gl_create` are
 a *request*, and the backend reports what it actually got. Concretely:
 

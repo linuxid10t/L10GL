@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <linux/fb.h>
 
+#include "../../fbdev.h"
 #include "../../pci_scan.h"
 #include "mga1064.h"
 
@@ -104,7 +105,7 @@ void mga1064_wait_vsync(struct mga1064_ctx *ctx)
 static void engine_init_global(struct mga1064_ctx *ctx)
 {
     /* PITCH: distance between scanlines in pixels */
-    mga_write32(ctx, MGA_PITCH, ctx->width);
+    mga_write32(ctx, MGA_PITCH, ctx->pitch);
 
     /* YDSTORG: screen origin at VRAM pixel offset 0 */
     mga_write32(ctx, MGA_YDSTORG, ctx->fb_offset);
@@ -463,12 +464,21 @@ void mga1064_draw_line(struct mga1064_ctx *ctx,
 
 int mga1064_init(struct mga1064_ctx *ctx, int width, int height, int bpp)
 {
+    if (width <= 0 || height <= 0 ||
+        (bpp != 1 && bpp != 2 && bpp != 4)) {
+        fprintf(stderr, "MGA-1064SG: requires positive geometry and "
+                        "8-, 16-, or 32-bit pixels\n");
+        return -EINVAL;
+    }
+
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->width = width;
     ctx->height = height;
     ctx->bpp = bpp;
     ctx->pitch = width;
+    ctx->stride = (uint32_t)width * (uint32_t)bpp;
+    ctx->bits_per_pixel = bpp * 8;
     ctx->fb_fd = -1;
     ctx->mem_fd = -1;
 
@@ -506,12 +516,41 @@ int mga1064_init(struct mga1064_ctx *ctx, int width, int height, int bpp)
     /* Map framebuffer via /dev/fb0 */
     ctx->fb_fd = open("/dev/fb0", O_RDWR);
     if (ctx->fb_fd >= 0) {
-        struct fb_fix_screeninfo finfo;
-        if (ioctl(ctx->fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            ctx->fb_size = finfo.smem_len;
-        } else {
-            ctx->fb_size = width * height * bpp;
+        struct l10gl_fbdev_mode mode;
+        struct l10gl_pixel_format required;
+        const struct l10gl_pixel_format *required_ptr = NULL;
+
+        if (bpp != 1) {
+            l10gl_pixel_format_standard(bpp * 8, &required);
+            required_ptr = &required;
         }
+        ret = l10gl_fbdev_negotiate(ctx->fb_fd, "MGA-1064SG", width,
+                                    height, bpp * 8, required_ptr, &mode);
+        if (ret) {
+            close(ctx->fb_fd);
+            ctx->fb_fd = -1;
+            munmap(ctx->mmio, ctx->mmio_size);
+            ctx->mmio = NULL;
+            return ret;
+        }
+        ctx->using_fbdev = 1;
+        ctx->width = (int)mode.var.xres;
+        ctx->height = (int)mode.var.yres;
+        ctx->bpp = (int)((mode.var.bits_per_pixel + 7u) / 8u);
+        ctx->bits_per_pixel = (int)mode.var.bits_per_pixel;
+        ctx->stride = mode.fix.line_length;
+        if (ctx->stride % (uint32_t)ctx->bpp) {
+            fprintf(stderr, "MGA-1064SG: fbdev stride %u is not a whole "
+                            "number of %d-byte pixels\n",
+                    ctx->stride, ctx->bpp);
+            close(ctx->fb_fd);
+            ctx->fb_fd = -1;
+            munmap(ctx->mmio, ctx->mmio_size);
+            ctx->mmio = NULL;
+            return -ENOTSUP;
+        }
+        ctx->pitch = (int)(ctx->stride / (uint32_t)ctx->bpp);
+        ctx->fb_size = mode.fix.smem_len;
         ctx->fb = mmap(NULL, ctx->fb_size, PROT_READ | PROT_WRITE,
                        MAP_SHARED, ctx->fb_fd, 0);
     } else {
@@ -520,9 +559,12 @@ int mga1064_init(struct mga1064_ctx *ctx, int width, int height, int bpp)
         ctx->fb_fd = open("/dev/mem", O_RDWR | O_SYNC);
         if (ctx->fb_fd < 0) {
             perror("open /dev/mem");
+            munmap(ctx->mmio, ctx->mmio_size);
+            ctx->mmio = NULL;
             return -errno;
         }
-        ctx->fb_size = width * height * bpp;
+        ctx->fb_size = pci.bar_size[1] ? pci.bar_size[1]
+                                       : (size_t)width * height * bpp * 2u;
         ctx->fb = mmap(NULL, ctx->fb_size, PROT_READ | PROT_WRITE,
                        MAP_SHARED, ctx->fb_fd,
                        (off_t)ctx->mgabase2);
@@ -531,20 +573,37 @@ int mga1064_init(struct mga1064_ctx *ctx, int width, int height, int bpp)
     if (ctx->fb == MAP_FAILED) {
         perror("mmap framebuffer");
         ctx->fb = NULL;
+        close(ctx->fb_fd);
+        ctx->fb_fd = -1;
+        munmap(ctx->mmio, ctx->mmio_size);
+        ctx->mmio = NULL;
         return -ENOMEM;
     }
     printf("  Framebuffer mapped: %zu bytes at %p\n", ctx->fb_size, ctx->fb);
 
     /* Compute memory layout */
     ctx->fb_offset = 0;
-    ctx->z_offset = width * height;  /* Z buffer after screen, in pixels */
+    ctx->z_offset = (uint32_t)ctx->pitch * (uint32_t)ctx->height;
     ctx->vram_size = ctx->fb_size;
+    if (((uint64_t)ctx->z_offset * 2u * (uint32_t)ctx->bpp) > ctx->fb_size) {
+        fprintf(stderr, "MGA-1064SG: mode needs color+Z storage beyond "
+                        "%zu-byte framebuffer mapping\n", ctx->fb_size);
+        munmap(ctx->fb, ctx->fb_size);
+        ctx->fb = NULL;
+        close(ctx->fb_fd);
+        ctx->fb_fd = -1;
+        munmap(ctx->mmio, ctx->mmio_size);
+        ctx->mmio = NULL;
+        return -ENOSPC;
+    }
 
     /* Initialize drawing engine */
     engine_init_global(ctx);
 
     printf("MGA-1064SG: Drawing engine initialized.\n");
-    printf("  Screen: %dx%d, %d bpp\n", width, height, bpp * 8);
+    printf("  Screen: %dx%d, %d bpp (stride %u, pitch %d pixels)\n",
+           ctx->width, ctx->height, ctx->bits_per_pixel, ctx->stride,
+           ctx->pitch);
     printf("  FB offset: %u px, Z offset: %u px\n",
            ctx->fb_offset, ctx->z_offset);
 

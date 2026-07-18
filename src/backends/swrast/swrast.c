@@ -21,6 +21,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "../../fbdev.h"
 #include "../../l10gl.h"
 
 struct swrast_color {
@@ -565,66 +566,58 @@ static int init_offscreen(struct l10gl_ctx *ctx, struct swrast_private *priv,
     if (!priv->color)
         return -ENOMEM;
     set_offscreen_format(priv, bpp);
-    ctx->width = width;
-    ctx->height = height;
-    ctx->bpp = bpp;
+    l10gl_mode_set_linear(ctx, width, height, bpp * 8,
+                          (uint32_t)priv->stride, NULL);
     printf("swrast: using offscreen %dx%d %dbpp buffer\n",
            width, height, bpp * 8);
     return 0;
 }
 
 static int init_fbdev(struct l10gl_ctx *ctx, struct swrast_private *priv,
-                      const char *path)
+                      const char *path, int width, int height, int bpp)
 {
-    struct fb_fix_screeninfo fix;
-    struct fb_var_screeninfo var;
+    struct l10gl_fbdev_mode mode;
+    const struct fb_fix_screeninfo *fix = &mode.fix;
+    const struct fb_var_screeninfo *var = &mode.var;
     size_t offset;
+    int ret;
 
     priv->fb_fd = open(path, O_RDWR);
     if (priv->fb_fd < 0)
         return -errno;
-    if (ioctl(priv->fb_fd, FBIOGET_FSCREENINFO, &fix) < 0 ||
-        ioctl(priv->fb_fd, FBIOGET_VSCREENINFO, &var) < 0)
-        return -errno;
-    if (fix.type != FB_TYPE_PACKED_PIXELS || fix.line_length == 0 ||
-        (fix.visual != FB_VISUAL_TRUECOLOR &&
-         fix.visual != FB_VISUAL_DIRECTCOLOR) ||
-        (var.bits_per_pixel != 16 && var.bits_per_pixel != 24 &&
-         var.bits_per_pixel != 32) || var.xres == 0 || var.yres == 0) {
+    ret = l10gl_fbdev_negotiate(priv->fb_fd, "swrast", width, height,
+                                bpp * 8, NULL, &mode);
+    if (ret)
+        return ret;
+    if (var->bits_per_pixel != 16 && var->bits_per_pixel != 24 &&
+        var->bits_per_pixel != 32) {
         fprintf(stderr, "swrast: fbdev requires packed true/direct color "
                         "at 16, 24, or 32bpp\n");
         return -ENOTSUP;
     }
-    if (var.red.length > 8 || var.green.length > 8 || var.blue.length > 8 ||
-        var.transp.length > 8) {
-        fprintf(stderr, "swrast: unsupported fbdev channel layout\n");
-        return -ENOTSUP;
-    }
 
-    priv->fb_map_len = fix.smem_len;
+    priv->fb_map_len = fix->smem_len;
     priv->fb_map = mmap(NULL, priv->fb_map_len, PROT_READ | PROT_WRITE,
                         MAP_SHARED, priv->fb_fd, 0);
     if (priv->fb_map == MAP_FAILED) {
         priv->fb_map = NULL;
         return -errno;
     }
-    offset = (size_t)var.yoffset * fix.line_length
-           + (size_t)var.xoffset * (var.bits_per_pixel / 8u);
+    offset = (size_t)var->yoffset * fix->line_length
+           + (size_t)var->xoffset * ((var->bits_per_pixel + 7u) / 8u);
     if (offset >= priv->fb_map_len ||
-        (size_t)var.yres > (priv->fb_map_len - offset) / fix.line_length) {
+        (size_t)var->yres > (priv->fb_map_len - offset) / fix->line_length) {
         fprintf(stderr, "swrast: visible fbdev raster exceeds its mapping\n");
         return -EOVERFLOW;
     }
 
     priv->color = (uint8_t *)priv->fb_map + offset;
-    priv->stride = fix.line_length;
-    priv->red = var.red;
-    priv->green = var.green;
-    priv->blue = var.blue;
-    priv->transp = var.transp;
-    ctx->width = (int)var.xres;
-    ctx->height = (int)var.yres;
-    ctx->bpp = (int)(var.bits_per_pixel / 8u);
+    priv->stride = fix->line_length;
+    priv->red = var->red;
+    priv->green = var->green;
+    priv->blue = var->blue;
+    priv->transp = var->transp;
+    l10gl_mode_from_fbdev(ctx, &mode);
     printf("swrast: using %s current mode %dx%d %dbpp, stride %zu\n",
            path, ctx->width, ctx->height, ctx->bpp * 8, priv->stride);
     return 0;
@@ -651,7 +644,7 @@ static int swrast_init(struct l10gl_ctx *ctx, int width, int height, int bpp)
     ctx->backend_data = priv;
 
     ret = fb_path && fb_path[0]
-        ? init_fbdev(ctx, priv, fb_path)
+        ? init_fbdev(ctx, priv, fb_path, width, height, bpp)
         : init_offscreen(ctx, priv, width, height, bpp);
     if (ret)
         goto fail;

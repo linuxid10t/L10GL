@@ -22,5 +22,6 @@ tritest
 diagap
 texprobe
 test-swrast
+test-mode
 test-xform
 test-pipeline

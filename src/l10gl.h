@@ -16,6 +16,24 @@
 
 #include <stdint.h>
 
+/* A scanout channel as reported by fbdev. Offsets count from the least
+ * significant bit of a packed pixel, matching struct fb_bitfield. */
+struct l10gl_color_channel {
+    uint8_t offset;
+    uint8_t length;
+    uint8_t msb_right;
+};
+
+/* Actual scanout storage layout. bits_per_pixel is kept separate from bpp:
+ * RGB555 commonly reports 15 bits while occupying two bytes per pixel. */
+struct l10gl_pixel_format {
+    uint8_t bits_per_pixel;
+    struct l10gl_color_channel red;
+    struct l10gl_color_channel green;
+    struct l10gl_color_channel blue;
+    struct l10gl_color_channel alpha;
+};
+
 /* ========================================================================
  * Vertex and Primitive Types
  * ======================================================================== */
@@ -240,10 +258,13 @@ struct l10gl_ctx {
     const struct l10gl_backend *backend;  /* const backend vtable */
     void *backend_data;                   /* backend-private state (e.g. mga1064_ctx) */
 
-    /* Screen geometry */
+    /* Actual screen geometry selected/adopted by the backend. The create
+     * arguments are requests; these fields are authoritative after init. */
     int width;
     int height;
-    int bpp;  /* bytes per pixel */
+    int bpp;              /* storage bytes per pixel */
+    uint32_t stride;      /* bytes per scanline, including padding */
+    struct l10gl_pixel_format pixel_format;
 
     /* Cached clear values */
     float clear_r, clear_g, clear_b;

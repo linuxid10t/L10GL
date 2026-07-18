@@ -110,6 +110,15 @@ static int test_reference_frame(const char *path)
         return -1;
     if (l10gl_create(&ctx, &swrast_backend, 20, 16, 3) < 0)
         return -1;
+    if (ctx.width != 20 || ctx.height != 16 || ctx.bpp != 3 ||
+        ctx.stride != 60 || ctx.pixel_format.bits_per_pixel != 24 ||
+        ctx.pixel_format.red.offset != 16 ||
+        ctx.pixel_format.green.offset != 8 ||
+        ctx.pixel_format.blue.offset != 0) {
+        fprintf(stderr, "test-swrast: incorrect published RGB888 mode\n");
+        failed = 1;
+        goto done;
+    }
     l10gl_clear_color(&ctx, 0.0f, 0.0f, 0.0f);
     l10gl_clear_depth(&ctx, 1.0f);
     l10gl_clear(&ctx);
@@ -210,6 +219,14 @@ static int test_rgb565_dump(const char *path)
         return -1;
     if (l10gl_create(&ctx, &swrast_backend, 2, 1, 2) < 0)
         return -1;
+    if (ctx.stride != 4 || ctx.pixel_format.bits_per_pixel != 16 ||
+        ctx.pixel_format.red.offset != 11 ||
+        ctx.pixel_format.green.length != 6) {
+        fprintf(stderr, "test-swrast: incorrect published RGB565 mode\n");
+        l10gl_destroy(&ctx);
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
     l10gl_clear_color(&ctx, 1.0f, 0.5f, 1.0f);
     l10gl_clear(&ctx);
     l10gl_swap_buffers(&ctx);

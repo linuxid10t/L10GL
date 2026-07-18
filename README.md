@@ -136,7 +136,9 @@ make check
 top-left coverage, blending, depth ordering, perspective correction, bilinear
 filtering, RGB565 conversion, and PPM serialization. It also validates matrix
 ordering, stack bounds, projections, viewport conversion, depth range,
-attribute capture, primitive assembly, texture dispatch, and face culling.
+attribute capture, primitive assembly, texture dispatch, face culling, and the
+requested-versus-actual display-mode contract (including padded stride and
+RGB555/RGB565/RGB888 channel layouts).
 
 ### Software rendering and frame dumps
 
@@ -166,8 +168,11 @@ with `L10GL_SWRAST_FB`:
 sudo env L10GL_BACKEND=swrast L10GL_SWRAST_FB=/dev/fb0 ./cube
 ```
 
-This adopts the current 16-, 24-, or 32-bit fbdev mode; it does not change the
-mode or yet put the VT into `KD_GRAPHICS`.
+This uses a packed 16-, 24-, or 32-bit fbdev mode. The demo geometry/depth is a
+request: if the current mode differs, L10GL asks the framebuffer driver to
+switch it, re-reads the actual mode and stride, and fails clearly if the driver
+refuses or ignores the request. P2 has not yet landed, so L10GL does not put the
+VT into `KD_GRAPHICS` or restore a changed fbdev mode on exit yet.
 
 Run a demo as root:
 

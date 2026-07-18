@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "../../fbdev.h"
 #include "../../l10gl.h"
 #include "mga1064.h"
 
@@ -93,6 +94,33 @@ static int mga_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
         free(priv);
         ctx->backend_data = NULL;
         return ret;
+    }
+
+    {
+        struct l10gl_fbdev_mode mode;
+        struct l10gl_pixel_format format;
+        const struct l10gl_pixel_format *format_ptr = NULL;
+
+        if (priv->hw.using_fbdev) {
+            ret = l10gl_fbdev_read_mode(priv->hw.fb_fd, "MGA-1064SG", &mode);
+            if (ret) {
+                mga1064_cleanup(&priv->hw);
+                free(priv);
+                ctx->backend_data = NULL;
+                return ret;
+            }
+            l10gl_mode_from_fbdev(ctx, &mode);
+        } else if (l10gl_pixel_format_standard(priv->hw.bits_per_pixel,
+                                               &format) == 0) {
+            format_ptr = &format;
+            l10gl_mode_set_linear(ctx, priv->hw.width, priv->hw.height,
+                                  priv->hw.bits_per_pixel, priv->hw.stride,
+                                  format_ptr);
+        } else {
+            l10gl_mode_set_linear(ctx, priv->hw.width, priv->hw.height,
+                                  priv->hw.bits_per_pixel, priv->hw.stride,
+                                  NULL);
+        }
     }
 
     /* Defaults */

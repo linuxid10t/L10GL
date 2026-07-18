@@ -14,6 +14,30 @@
 #include "l10gl_pipeline.h"
 #include "l10gl_xform.h"
 
+static int l10gl_mode_valid(const struct l10gl_ctx *ctx)
+{
+    const struct l10gl_pixel_format *format = &ctx->pixel_format;
+    const struct l10gl_color_channel *channels[] = {
+        &format->red, &format->green, &format->blue, &format->alpha,
+    };
+    uint64_t minimum_stride;
+    size_t i;
+
+    if (ctx->width <= 0 || ctx->height <= 0 || ctx->bpp <= 0 ||
+        ctx->bpp > 4 || !format->bits_per_pixel ||
+        format->bits_per_pixel > ctx->bpp * 8)
+        return 0;
+    minimum_stride = (uint64_t)(uint32_t)ctx->width * (uint32_t)ctx->bpp;
+    if (!ctx->stride || ctx->stride < minimum_stride)
+        return 0;
+    for (i = 0; i < sizeof(channels) / sizeof(channels[0]); i++) {
+        if ((unsigned int)channels[i]->offset + channels[i]->length >
+            (unsigned int)ctx->bpp * 8u)
+            return 0;
+    }
+    return 1;
+}
+
 /* ========================================================================
  * Lifecycle
  * ======================================================================== */
@@ -103,12 +127,31 @@ int l10gl_create(struct l10gl_ctx *ctx,
             return ret;
     }
 
+    if (!l10gl_mode_valid(ctx)) {
+        fprintf(stderr,
+                "L10GL: backend '%s' returned an invalid mode "
+                "(%dx%d, %d storage bytes, %ubpp, stride %u)\n",
+                backend->name, ctx->width, ctx->height, ctx->bpp,
+                ctx->pixel_format.bits_per_pixel, ctx->stride);
+        if (backend->cleanup)
+            backend->cleanup(ctx);
+        return -EINVAL;
+    }
+
     /* Transform state depends on the actual raster adopted by the backend. */
     l10gl_xform_init(ctx);
     l10gl_pipeline_init(ctx);
 
-    printf("L10GL: Backend '%s' initialized (%dx%d @ %dbpp)\n",
-           backend->name, ctx->width, ctx->height, ctx->bpp * 8);
+    printf("L10GL: Backend '%s' initialized\n", backend->name);
+    printf("  Requested: %dx%d @ %dbpp\n", width, height, bpp * 8);
+    printf("  Actual:    %dx%d @ %ubpp (%d storage bytes), stride %u\n",
+           ctx->width, ctx->height, ctx->pixel_format.bits_per_pixel,
+           ctx->bpp, ctx->stride);
+    printf("  Channels:  R%u:%u G%u:%u B%u:%u A%u:%u\n",
+           ctx->pixel_format.red.offset, ctx->pixel_format.red.length,
+           ctx->pixel_format.green.offset, ctx->pixel_format.green.length,
+           ctx->pixel_format.blue.offset, ctx->pixel_format.blue.length,
+           ctx->pixel_format.alpha.offset, ctx->pixel_format.alpha.length);
     printf("  Caps: %s%s%s%s%s%s%s%s%s\n",
            ctx->backend->caps & L10GL_CAP_GOURAUD     ? "Gouraud " : "",
            ctx->backend->caps & L10GL_CAP_ZBUFFER     ? "Z-buffer " : "",

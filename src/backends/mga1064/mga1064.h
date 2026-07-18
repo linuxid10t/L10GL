@@ -351,7 +351,10 @@ struct mga1064_ctx {
     int     width;          /* Screen width in pixels */
     int     height;         /* Screen height in pixels */
     int     bpp;            /* Bytes per pixel (NOT bits!) */
-    int     pitch;          /* Pitch in pixels (= width for linear) */
+    int     pitch;          /* Real scanline pitch in pixels */
+    uint32_t stride;        /* Real scanline pitch in bytes */
+    int     bits_per_pixel; /* fbdev depth; may differ from bpp * 8 */
+    int     using_fbdev;
 
     /* Memory layout */
     uint32_t vram_size;     /* Total VRAM in bytes */

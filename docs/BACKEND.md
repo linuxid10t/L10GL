@@ -43,10 +43,21 @@ PCI backends use `l10gl_pci_find()` from `src/pci_scan.h` for sysfs discovery.
 Put all supported device IDs in one backend-owned array and share one finder
 between `probe()` and `init()`. Do not add another PCI directory scanner.
 
-The `width`, `height`, and `bpp` arguments are a request. `bpp` is bytes per
-pixel, not bits. If the backend adopts a different live raster, write the actual
-geometry back to `l10gl_ctx` before returning. All later projection and buffer
-layout code relies on those values being truthful.
+The `width`, `height`, and `bpp` arguments are a request. `bpp` is storage bytes
+per pixel, not bits. Before returning, every backend must publish the actual
+`width`, `height`, `bpp`, byte `stride`, and `pixel_format` in `l10gl_ctx`.
+`pixel_format.bits_per_pixel` is deliberately separate from `bpp`: RGB555 may
+report 15 bits while consuming two bytes. Channel offsets count from the least
+significant packed-pixel bit. The frontend rejects an impossible mode contract
+before initializing transforms.
+
+fbdev-backed implementations should use the shared helpers in `src/fbdev.h`.
+They read both `fb_fix_screeninfo` and `fb_var_screeninfo`, negotiate a mismatch,
+and re-read the result so `line_length` and channel fields are authoritative.
+Do not derive hardware pitch from visible width. Fixed-format engines must pass
+their required channel layout: ViRGE, for example, requires RGB555 because the
+S3d 16-bit render target cannot emit RGB565. Offscreen/native paths use
+`l10gl_mode_set_linear()` to publish the same contract.
 
 ## Fill the vtable incrementally
 

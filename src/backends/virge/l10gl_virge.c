@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <math.h>
 
+#include "../../fbdev.h"
 #include "../../l10gl.h"
 #include "virge.h"
 
@@ -230,11 +231,33 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
         return ret;
     }
 
-    /* virge_init may adopt the real raster instead of the request
-     * (native scanout takeover on no-fbdev machines) -- report the
-     * actual geometry so demos render to the true screen size. */
-    ctx->width = priv->hw.width;
-    ctx->height = priv->hw.height;
+    /* virge_init either negotiated fbdev to the exact request or adopted
+     * the live raster through native RGB555 takeover. Publish the actual
+     * stride and fixed render-target layout to the frontend. */
+    {
+        struct l10gl_fbdev_mode mode;
+        struct l10gl_pixel_format format;
+        const struct l10gl_pixel_format *format_ptr = NULL;
+        int bits = priv->hw.bpp == 2 ? 15 : priv->hw.bpp * 8;
+
+        if (priv->hw.fb_fd >= 0) {
+            ret = l10gl_fbdev_read_mode(priv->hw.fb_fd, "S3 ViRGE", &mode);
+            if (ret) {
+                virge_cleanup(&priv->hw);
+                free(priv);
+                ctx->backend_data = NULL;
+                return ret;
+            }
+            l10gl_mode_from_fbdev(ctx, &mode);
+        } else if (l10gl_pixel_format_standard(bits, &format) == 0) {
+            format_ptr = &format;
+            l10gl_mode_set_linear(ctx, priv->hw.width, priv->hw.height, bits,
+                                  priv->hw.stride, format_ptr);
+        } else {
+            l10gl_mode_set_linear(ctx, priv->hw.width, priv->hw.height, bits,
+                                  priv->hw.stride, NULL);
+        }
+    }
 
     /* Defaults */
     priv->depth_test_enabled = 1;

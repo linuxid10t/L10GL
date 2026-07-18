@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "fbdev.h"
 #include "l10gl.h"
 
 #define MAX_CAPTURED 16
@@ -54,9 +55,8 @@ static void expect_float(const char *label, float actual, float expected)
 
 static int capture_init(struct l10gl_ctx *ctx, int width, int height, int bpp)
 {
-    (void)bpp;
-    ctx->width = width;
-    ctx->height = height;
+    l10gl_mode_set_linear(ctx, width, height, bpp * 8,
+                          (uint32_t)width * (uint32_t)bpp, NULL);
     ctx->backend_data = &capture;
     return 0;
 }

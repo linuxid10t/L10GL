@@ -1,4 +1,4 @@
-# L10GL handoff brief — state as of 2026-07-07
+# L10GL handoff brief — state as of 2026-07-18
 
 Audience: an implementing agent picking up this project cold. Read
 `PLAN.md` (roadmap + current-state snapshot) and
@@ -53,6 +53,20 @@ content is left as the last frame for now. Code: the CPU memcpy + saved_console_
 skeleton is kept in virge_scanout_takeover/virge_cleanup with an explanatory
 note; the diagnostic probes (VRAM dump, engine-fill marker) were removed.
 See #5 for the full decode.
+
+**Phase 3 P1 implemented 2026-07-18; hardware sign-off pending.** The frontend
+context now exposes actual byte stride plus fbdev-style packed channel fields,
+and rejects backends that return an impossible mode. `src/fbdev.c` centralizes
+GET/PUT/re-read negotiation. ViRGE asks fbdev for the requested geometry and
+its mandatory 15-bit RGB555 layout; MGA-1064 programs real padded pitch;
+swrast uses the actual packed layout. A refused/ignored mode reports both the
+request and live mode plus an example `fbset` command. `make check`, including
+the new `test-mode`, passes. The primary `david-ta970` path has no `/dev/fb0`,
+so its immediate hardware check is a regression of native takeover: the new
+frontend log should report requested 640x480x16, actual 800x600x15, stride
+1600, followed by the same correct tear-free cube. True fbdev mode-switch
+acceptance remains to be run on a boot with `s3fb` or `matroxfb`. P2 is still
+required for VT `KD_GRAPHICS` ownership and restoration of a changed mode.
 
 ## Test setup (fixed, do not re-derive)
 
