@@ -1,0 +1,595 @@
+/* Thin, single-current-context OpenGL 1.1 compatibility layer. */
+
+#include <errno.h>
+#include <string.h>
+
+#include <GL/gl.h>
+
+#include "l10gl.h"
+
+struct l10gl_gl_state {
+    struct l10gl_ctx owned_context;
+    struct l10gl_ctx *current;
+    GLenum error;
+    GLenum cull_face;
+    GLenum shade_model;
+    int owns_context;
+    int cull_enabled;
+    int lighting_enabled;
+    int light0_enabled;
+    int normalize_enabled;
+    int texture_2d_enabled;
+};
+
+static struct l10gl_gl_state gl_state = {
+    .cull_face = GL_BACK,
+    .shade_model = GL_SMOOTH,
+};
+
+static void gl_record_error(GLenum error)
+{
+    if (gl_state.error == GL_NO_ERROR)
+        gl_state.error = error;
+}
+
+static struct l10gl_ctx *gl_current(void)
+{
+    if (!gl_state.current)
+        gl_record_error(GL_INVALID_OPERATION);
+    return gl_state.current;
+}
+
+static void gl_reset_compat_state(void)
+{
+    gl_state.error = GL_NO_ERROR;
+    gl_state.cull_face = GL_BACK;
+    gl_state.shade_model = GL_SMOOTH;
+    gl_state.cull_enabled = 0;
+    gl_state.lighting_enabled = 0;
+    gl_state.light0_enabled = 0;
+    gl_state.normalize_enabled = 0;
+    gl_state.texture_2d_enabled = 0;
+}
+
+int l10glCreateContext(GLsizei width, GLsizei height, GLint bits_per_pixel)
+{
+    int ret;
+
+    if (gl_state.owns_context)
+        return -EBUSY;
+    if (width <= 0 || height <= 0 ||
+        (bits_per_pixel != 16 && bits_per_pixel != 32))
+        return -EINVAL;
+
+    ret = l10gl_create_auto(&gl_state.owned_context, width, height,
+                            bits_per_pixel / 8);
+    if (ret)
+        return ret;
+
+    gl_state.current = &gl_state.owned_context;
+    gl_state.owns_context = 1;
+    gl_reset_compat_state();
+
+    /* l10gl's native default is depth-on; OpenGL 1.1 defaults it off. */
+    l10gl_enable_depth_test(gl_state.current, 0);
+    l10gl_cull_face(gl_state.current, L10GL_CULL_NONE);
+    l10gl_enable_lighting(gl_state.current, 0);
+    return 0;
+}
+
+void l10glDestroyContext(void)
+{
+    if (gl_state.owns_context)
+        l10gl_destroy(&gl_state.owned_context);
+    memset(&gl_state.owned_context, 0, sizeof(gl_state.owned_context));
+    gl_state.current = NULL;
+    gl_state.owns_context = 0;
+    gl_reset_compat_state();
+}
+
+void l10glMakeCurrent(struct l10gl_ctx *ctx)
+{
+    gl_state.current = ctx;
+    gl_reset_compat_state();
+}
+
+struct l10gl_ctx *l10glGetCurrentContext(void)
+{
+    return gl_state.current;
+}
+
+void l10glSwapBuffers(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_swap_buffers(ctx);
+}
+
+GLenum glGetError(void)
+{
+    GLenum error = gl_state.error;
+
+    gl_state.error = GL_NO_ERROR;
+    return error;
+}
+
+static int gl_primitive(GLenum mode, enum l10gl_primitive *primitive)
+{
+    switch (mode) {
+    case GL_TRIANGLES:      *primitive = L10GL_TRIANGLES; return 0;
+    case GL_TRIANGLE_STRIP: *primitive = L10GL_TRIANGLE_STRIP; return 0;
+    case GL_TRIANGLE_FAN:   *primitive = L10GL_TRIANGLE_FAN; return 0;
+    case GL_LINES:          *primitive = L10GL_LINES; return 0;
+    case GL_LINE_STRIP:     *primitive = L10GL_LINE_STRIP; return 0;
+    default: return -1;
+    }
+}
+
+void glBegin(GLenum mode)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_primitive primitive;
+
+    if (!ctx)
+        return;
+    if (gl_primitive(mode, &primitive)) {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
+    }
+    if (l10gl_begin(ctx, primitive))
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glEnd(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx && l10gl_end(ctx))
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glVertex2f(GLfloat x, GLfloat y)
+{
+    glVertex3f(x, y, 0.0f);
+}
+
+void glVertex3f(GLfloat x, GLfloat y, GLfloat z)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx && l10gl_vertex3f(ctx, x, y, z))
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glVertex3fv(const GLfloat *v)
+{
+    if (!v) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    glVertex3f(v[0], v[1], v[2]);
+}
+
+void glColor3f(GLfloat red, GLfloat green, GLfloat blue)
+{
+    glColor4f(red, green, blue, 1.0f);
+}
+
+void glColor4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_color4f(ctx, red, green, blue, alpha);
+}
+
+void glColor3fv(const GLfloat *v)
+{
+    if (!v) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    glColor3f(v[0], v[1], v[2]);
+}
+
+void glColor4fv(const GLfloat *v)
+{
+    if (!v) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    glColor4f(v[0], v[1], v[2], v[3]);
+}
+
+void glNormal3f(GLfloat nx, GLfloat ny, GLfloat nz)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_normal3f(ctx, nx, ny, nz);
+}
+
+void glNormal3fv(const GLfloat *v)
+{
+    if (!v) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    glNormal3f(v[0], v[1], v[2]);
+}
+
+void glTexCoord2f(GLfloat s, GLfloat t)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_texcoord2f(ctx, s, t);
+}
+
+void glTexCoord2fv(const GLfloat *v)
+{
+    if (!v) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    glTexCoord2f(v[0], v[1]);
+}
+
+void glMatrixMode(GLenum mode)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_matrix_mode target;
+
+    if (!ctx)
+        return;
+    if (mode == GL_MODELVIEW)
+        target = L10GL_MATRIX_MODELVIEW;
+    else if (mode == GL_PROJECTION)
+        target = L10GL_MATRIX_PROJECTION;
+    else {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
+    }
+    if (l10gl_matrix_mode(ctx, target))
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glLoadIdentity(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_load_identity(ctx);
+}
+
+void glLoadMatrixf(const GLfloat *m)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!m) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    if (ctx)
+        l10gl_load_matrixf(ctx, m);
+}
+
+void glMultMatrixf(const GLfloat *m)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!m) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    if (ctx)
+        l10gl_mult_matrixf(ctx, m);
+}
+
+void glPushMatrix(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    int ret;
+
+    if (!ctx)
+        return;
+    ret = l10gl_push_matrix(ctx);
+    if (ret == -EOVERFLOW)
+        gl_record_error(GL_STACK_OVERFLOW);
+    else if (ret)
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glPopMatrix(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    int ret;
+
+    if (!ctx)
+        return;
+    ret = l10gl_pop_matrix(ctx);
+    if (ret == -ERANGE)
+        gl_record_error(GL_STACK_UNDERFLOW);
+    else if (ret)
+        gl_record_error(GL_INVALID_OPERATION);
+}
+
+void glTranslatef(GLfloat x, GLfloat y, GLfloat z)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_translatef(ctx, x, y, z);
+}
+
+void glRotatef(GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx && l10gl_rotatef(ctx, angle, x, y, z))
+        gl_record_error(GL_INVALID_VALUE);
+}
+
+void glScalef(GLfloat x, GLfloat y, GLfloat z)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_scalef(ctx, x, y, z);
+}
+
+void glFrustum(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top,
+               GLdouble z_near, GLdouble z_far)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx && l10gl_frustum(ctx, left, right, bottom, top, z_near, z_far))
+        gl_record_error(GL_INVALID_VALUE);
+}
+
+void glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top,
+             GLdouble z_near, GLdouble z_far)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx && l10gl_ortho(ctx, left, right, bottom, top, z_near, z_far))
+        gl_record_error(GL_INVALID_VALUE);
+}
+
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (width < 0 || height < 0) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    if (ctx && l10gl_viewport(ctx, x, y, width, height))
+        gl_record_error(GL_INVALID_VALUE);
+}
+
+void glDepthRange(GLclampd z_near, GLclampd z_far)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!ctx)
+        return;
+    if (z_near < 0) z_near = 0;
+    if (z_near > 1) z_near = 1;
+    if (z_far < 0) z_far = 0;
+    if (z_far > 1) z_far = 1;
+    l10gl_depth_range(ctx, z_near, z_far);
+}
+
+void glClearColor(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    (void)alpha;
+
+    if (!ctx)
+        return;
+    if (red < 0)
+        red = 0;
+    if (red > 1)
+        red = 1;
+    if (green < 0)
+        green = 0;
+    if (green > 1)
+        green = 1;
+    if (blue < 0)
+        blue = 0;
+    if (blue > 1)
+        blue = 1;
+    l10gl_clear_color(ctx, red, green, blue);
+}
+
+void glClearDepth(GLclampd depth)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!ctx)
+        return;
+    if (depth < 0) depth = 0;
+    if (depth > 1) depth = 1;
+    l10gl_clear_depth(ctx, depth);
+}
+
+void glClear(GLbitfield mask)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    const GLbitfield supported = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
+
+    if (!ctx)
+        return;
+    if (mask & ~supported) {
+        gl_record_error(GL_INVALID_VALUE);
+        return;
+    }
+    if ((mask & GL_DEPTH_BUFFER_BIT) && ctx->backend->clear_depth &&
+        (ctx->backend->caps & L10GL_CAP_ZBUFFER))
+        ctx->backend->clear_depth(ctx, ctx->clear_z);
+    if ((mask & GL_COLOR_BUFFER_BIT) && ctx->backend->clear_color)
+        ctx->backend->clear_color(ctx, ctx->clear_r, ctx->clear_g,
+                                  ctx->clear_b);
+}
+
+static void gl_apply_lighting(struct l10gl_ctx *ctx)
+{
+    l10gl_enable_lighting(ctx,
+                          gl_state.lighting_enabled &&
+                          gl_state.light0_enabled);
+}
+
+static void gl_set_enable(GLenum cap, int enable)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!ctx)
+        return;
+    switch (cap) {
+    case GL_DEPTH_TEST:
+        l10gl_enable_depth_test(ctx, enable);
+        break;
+    case GL_BLEND:
+        l10gl_enable_blend(ctx, enable);
+        break;
+    case GL_CULL_FACE:
+        gl_state.cull_enabled = enable;
+        l10gl_cull_face(ctx, enable ? (gl_state.cull_face == GL_FRONT ?
+                          L10GL_CULL_FRONT : L10GL_CULL_BACK) :
+                          L10GL_CULL_NONE);
+        break;
+    case GL_LIGHTING:
+        gl_state.lighting_enabled = enable;
+        gl_apply_lighting(ctx);
+        break;
+    case GL_LIGHT0:
+        gl_state.light0_enabled = enable;
+        gl_apply_lighting(ctx);
+        break;
+    case GL_NORMALIZE:
+        /* Phase 2 always normalizes transformed normals. */
+        gl_state.normalize_enabled = enable;
+        break;
+    case GL_TEXTURE_2D:
+        /* Texture object binding is added by the next Phase 4 slice. */
+        gl_state.texture_2d_enabled = enable;
+        break;
+    default:
+        gl_record_error(GL_INVALID_ENUM);
+        break;
+    }
+}
+
+void glEnable(GLenum cap)
+{
+    gl_set_enable(cap, 1);
+}
+
+void glDisable(GLenum cap)
+{
+    gl_set_enable(cap, 0);
+}
+
+void glCullFace(GLenum mode)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (!ctx)
+        return;
+    if (mode != GL_FRONT && mode != GL_BACK) {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
+    }
+    gl_state.cull_face = mode;
+    if (gl_state.cull_enabled)
+        l10gl_cull_face(ctx, mode == GL_FRONT ? L10GL_CULL_FRONT :
+                                               L10GL_CULL_BACK);
+}
+
+void glDepthFunc(GLenum func)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_depth_func mapped;
+
+    if (!ctx)
+        return;
+    switch (func) {
+    case GL_NEVER:    mapped = L10GL_NEVER; break;
+    case GL_LESS:     mapped = L10GL_LESS; break;
+    case GL_EQUAL:    mapped = L10GL_EQUAL; break;
+    case GL_LEQUAL:   mapped = L10GL_LEQUAL; break;
+    case GL_GREATER:  mapped = L10GL_GREATER; break;
+    case GL_NOTEQUAL: mapped = L10GL_NOTEQUAL; break;
+    case GL_GEQUAL:   mapped = L10GL_GEQUAL; break;
+    case GL_ALWAYS:   mapped = L10GL_ALWAYS; break;
+    default: gl_record_error(GL_INVALID_ENUM); return;
+    }
+    l10gl_depth_func(ctx, mapped);
+}
+
+void glDepthMask(GLboolean flag)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_depth_mask(ctx, flag != GL_FALSE);
+}
+
+static int gl_blend_factor(GLenum factor, enum l10gl_blend_func *mapped)
+{
+    switch (factor) {
+    case GL_ZERO:                *mapped = L10GL_ZERO; return 0;
+    case GL_ONE:                 *mapped = L10GL_ONE; return 0;
+    case GL_SRC_COLOR:           *mapped = L10GL_SRC_COLOR; return 0;
+    case GL_ONE_MINUS_SRC_COLOR: *mapped = L10GL_ONE_MINUS_SRC_COLOR; return 0;
+    case GL_SRC_ALPHA:           *mapped = L10GL_SRC_ALPHA; return 0;
+    case GL_ONE_MINUS_SRC_ALPHA: *mapped = L10GL_ONE_MINUS_SRC_ALPHA; return 0;
+    case GL_DST_COLOR:           *mapped = L10GL_DST_COLOR; return 0;
+    case GL_ONE_MINUS_DST_COLOR: *mapped = L10GL_ONE_MINUS_DST_COLOR; return 0;
+    default: return -1;
+    }
+}
+
+void glBlendFunc(GLenum sfactor, GLenum dfactor)
+{
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_blend_func source, destination;
+
+    if (!ctx)
+        return;
+    if (gl_blend_factor(sfactor, &source) ||
+        gl_blend_factor(dfactor, &destination)) {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
+    }
+    l10gl_blend_func(ctx, source, destination);
+}
+
+void glShadeModel(GLenum mode)
+{
+    if (!gl_current())
+        return;
+    if (mode != GL_FLAT && mode != GL_SMOOTH) {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
+    }
+    /* Hardware always receives per-vertex color; flat shading is completed
+     * with quad support in the gears slice. */
+    gl_state.shade_model = mode;
+}
+
+void glFlush(void)
+{
+    /* L10GL submits register writes synchronously; there is no client queue. */
+    (void)gl_current();
+}
+
+void glFinish(void)
+{
+    struct l10gl_ctx *ctx = gl_current();
+
+    if (ctx)
+        l10gl_wait_engine(ctx);
+}

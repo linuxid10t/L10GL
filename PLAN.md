@@ -1098,6 +1098,22 @@ usable console; `rawtri.c` (single-buffer path) still works.
 
 ## Phase 4 — OpenGL compatibility shim
 
+**G1 implemented 2026-07-18; automated frontend checkpoint complete.**
+`include/GL/gl.h` now publishes the first honest GL 1.1 subset and
+`src/l10gl_gl.c` supplies a single-current-context bridge over Phase 2.
+Implemented calls cover triangle/strip/fan and line immediate mode with
+current color/normal/texture coordinates; MODELVIEW/PROJECTION matrices and
+stacks; viewport, depth range, frustum, and ortho; independent color/depth
+clears; depth, blend, cull, lighting/light0, normalize, and texture-2D enable
+state; finish/swap dispatch; and first-error latching through `glGetError`.
+The L10GL-specific `l10glCreateContext`/`l10glDestroyContext`/
+`l10glSwapBuffers` calls own fullscreen setup and presentation, while
+`l10glMakeCurrent` lets tests and native L10GL applications install an
+existing context. `test-gl` drives the real transform/primitive frontend
+through a capture backend, and the full `make check` suite passes. G2 is
+quad/quad-strip assembly plus the light/material calls required by classic
+gears; G3 is the texture-object API; G4 is the swrast and ViRGE gears proof.
+
 A thin `include/GL/gl.h`-subset (`src/l10gl_gl.c`) mapping real GL 1.1
 entry points onto the Phase 2 pipeline: `glBegin/glEnd/glVertex*/glColor*/
 glNormal*/glTexCoord*`, matrix functions, `glEnable/glDisable`

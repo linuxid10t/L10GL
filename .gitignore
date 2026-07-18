@@ -26,5 +26,6 @@ test-console
 test-mode
 test-xform
 test-pipeline
+test-gl
 test-mga1064
 test-virge-mode

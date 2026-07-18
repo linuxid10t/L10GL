@@ -304,6 +304,18 @@ so that mode cannot satisfy the established double-buffer+Z contract in 4MB.
 Keep the fixed timing entries and pure tests, but keep runtime rejection
 intentional. Proceed to Phase 4 (OpenGL compatibility shim).
 
+**Phase 4 G1 implemented 2026-07-18; automated checkpoint complete.**
+`include/GL/gl.h` and `src/l10gl_gl.c` now provide a single-current-context
+OpenGL 1.1 subset over the existing Phase 2 pipeline. The context bridge keeps
+fullscreen creation/presentation explicitly L10GL-specific. Immediate
+triangles/strips/fans/lines, current attributes, matrix stacks and projection,
+viewport/depth range, masked color/depth clearing, depth/blend/cull and
+lighting gates, finish/swap, and `glGetError` are mapped. `test-gl` validates
+those mappings through a capture backend and the full `make check` suite
+passes. Do not call Phase 4 complete yet: next implement GL_QUADS and
+GL_QUAD_STRIP assembly plus `glLightfv`/`glMaterialfv` for classic gears,
+then texture objects and the swrast/ViRGE gears acceptance run.
+
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 800 600 16

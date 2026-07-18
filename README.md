@@ -48,6 +48,14 @@ emits perspective-correct texture W with the established screen-space backend
 primitives. The direct `l10gl_draw_triangle` API remains available and
 unchanged.
 
+Phase 4 has started with a real `<GL/gl.h>` compatibility surface. Its first
+checkpoint maps immediate triangles/strips/fans/lines, current vertex
+attributes, matrix stacks and projection calls, viewport/depth range, masked
+clears, depth/blend/cull/lighting state, synchronization, and GL error
+reporting onto that frontend. L10GL still owns fullscreen context creation and
+buffer swapping; quad assembly, light/material entry points, texture objects,
+and the gears proof are the next Phase 4 slices.
+
 | Backend | Hardware | Status |
 |---|---|---|
 | `virge` | S3 ViRGE family | Primary; ViRGE/DX verified on silicon |
@@ -62,6 +70,9 @@ The detailed hardware history and test evidence live in
 
 ```text
 Application / demo
+        │
+        ▼
+Optional OpenGL 1.1 compatibility shim (`include/GL/gl.h`)
         │
         ▼
 Transform layer (matrix stacks + immediate primitive pipeline)
@@ -192,7 +203,8 @@ machine, and swrast output pixels for
 top-left coverage, blending, depth ordering, perspective correction, bilinear
 filtering, RGB565 conversion, and PPM serialization. It also validates matrix
 ordering, stack bounds, projections, viewport conversion, depth range,
-attribute capture, primitive assembly, texture dispatch, face culling, and the
+attribute capture, primitive assembly, texture dispatch, face culling, the
+Phase 4 GL-to-L10GL state/matrix/immediate-mode mappings, and the
 requested-versus-actual display-mode contract (including padded stride and
 RGB555/RGB565/RGB888 channel layouts).
 
@@ -254,8 +266,12 @@ An unknown override is rejected and prints the available backend names. If no
 supported card is present, automatic selection uses offscreen swrast without
 attempting MMIO access; it prints a reminder when no dump path was configured.
 
-`make` produces `libl10gl.a`. An application can include `src/l10gl.h`, link
-the archive and `libm`, then create a context with `l10gl_create_auto()`.
+`make` produces `libl10gl.a`. A native application can include `src/l10gl.h`,
+link the archive and `libm`, then create a context with
+`l10gl_create_auto()`. A Phase 4 application instead includes `<GL/gl.h>`
+with `-Iinclude`, calls `l10glCreateContext(width, height, bits_per_pixel)`,
+uses the implemented GL subset, presents with `l10glSwapBuffers()`, and ends
+with `l10glDestroyContext()`.
 
 ## Diagnostics
 
