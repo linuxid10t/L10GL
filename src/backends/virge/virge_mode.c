@@ -7,9 +7,9 @@
 
 #include "virge_mode.h"
 
-/* The first P6 hardware pass uses only the conservative 60 Hz entries. The
- * 75 Hz entries are defined now so the eventual register writer consumes one
- * fixed, reviewable table rather than synthesizing timings at runtime.
+/* P6 began with the conservative 60 Hz entries and opens the 75 Hz entries
+ * one hardware gate at a time. Keeping both refreshes in this fixed table
+ * ensures that the writer never synthesizes timings at runtime.
  * Horizontal values are canonical VESA timings and are all divisible by 8;
  * the verified ViRGE 15/16bpp path represents them at two CRTC character
  * clocks per eight pixels (equivalently, one count per four pixels). */

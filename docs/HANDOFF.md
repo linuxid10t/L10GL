@@ -230,6 +230,17 @@ mode, the rotating cube was visible, native sync measured approximately
 closed; retain the diagnostic rate/routing logs for the later 75Hz and
 1024x768 gates.
 
+**P6e 640x480@75 gate implemented 2026-07-18; awaiting real-hardware
+validation.** Set `L10GL_REFRESH=75` alongside `L10GL_MODESET=native` to select
+it; the default remains the signed-off 60Hz image. This is intentionally the
+smallest next gate: resolution, stride, RGB555 format, and buffer allocation
+are unchanged from P6d, while the fixed table supplies 75Hz timings and a
+31.5MHz programmable DCLK. DB019-B sections 9.1-9.2 give `SR12=63`, `SR13=56`
+(31.500MHz, 13ppm) and the SR15.5 immediate-load pulse already exercised at
+40MHz by P6c. Tests pin the complete standard CRTC image, FIFO fetch,
+`CR5D=00`, negative sync polarity, and PLL bytes. 800x600@75 and both
+1024x768 modes remain rejected.
+
 Run over SSH from a clean console baseline:
 
 ```
@@ -238,8 +249,18 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
 ```
 
 Verified: visible 640x480 cube, no out-of-range event, and recovery of the
-original 800x600 simplefb signal after Ctrl-C. Keep 75Hz and 1024x768 locked
-until their own staged gates.
+original 800x600 simplefb signal after Ctrl-C. P6e opens only 640x480@75;
+800x600@75 and 1024x768 remain locked until their own staged gates.
+
+Next real-hardware command:
+
+```
+sudo env L10GL_BACKEND=virge L10GL_MODESET=native L10GL_REFRESH=75 \
+  tools/l10gl-run -- ./cube 640 480 16
+```
+
+Expected measured sync is about 37.50kHz / 75.00Hz. Confirm a stable visible
+cube and recovery of the original 800x600 simplefb console after Ctrl-C.
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \

@@ -144,6 +144,7 @@ static void test_pll(void)
 
     /* Exact expected encodings using the documented 14.318 MHz reference. */
     expect_pll(25175, 0x67, 0x7d, 25255, "25.175 MHz");
+    expect_pll(31500, 0x63, 0x56, 31500, "31.500 MHz");
     expect_pll(40000, 0x49, 0x79, 40025, "40.000 MHz");
     expect_pll(65000, 0x44, 0x6b, 65028, "65.000 MHz");
 
@@ -244,6 +245,36 @@ static void test_crtc_image(void)
     EXPECT(image.seq_value[0x15] == 0x02 &&
            image.seq_mask[0x15] == 0x22,
            "built-in VGA DCLK enable is included in save image");
+
+    mode = virge_mode_find(640, 480, 75);
+    EXPECT(virge_mode_encode_16bpp(mode, 1280, 4u * 1024u * 1024u,
+                                   &image) == 0,
+           "encode 640x480@75 CRTC image");
+    {
+        static const uint8_t expected_standard[25] = {
+            0xcd, 0x9f, 0xa0, 0x0e, 0xa4, 0x14, 0xf2, 0x1f,
+            0x00, 0x40, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xe1, 0xa4, 0xdf, 0xa0, 0x00, 0xdf, 0xf3, 0xe3,
+            0xff,
+        };
+
+        for (i = 0; i < sizeof(expected_standard); i++)
+            EXPECT(image.value[i] == expected_standard[i],
+                   "640x480@75 standard CRTC byte matches DB019-B encoding");
+    }
+    EXPECT(image.value[0x3b] == 0xba && image.fifo_fetch == 186 &&
+           image.value[0x5d] == 0x00 && image.value[0x5e] == 0x00,
+           "640x480@75 FIFO and extended overflow bytes");
+    EXPECT(image.value[0x13] == 0xa0 && image.misc_value == 0xcf &&
+           !image.builtin_dclk_25175 && image.pll.sr12 == 0x63 &&
+           image.pll.sr13 == 0x56 && image.pll.actual_khz == 31500 &&
+           image.pll.error_ppm == 13,
+           "640x480@75 pitch, polarity, and programmable 31.5MHz clock");
+    EXPECT(image.seq_value[0x15] == 0x00 &&
+           image.seq_mask[0x15] == 0x20,
+           "640x480@75 uses the immediate programmable-DCLK load pulse");
+
+    mode = virge_mode_find(640, 480, 60);
     EXPECT(virge_mode_encode_16bpp(mode, 1279, 2u * 1024u * 1024u,
                                    &image) == -EINVAL,
            "reject unaligned pitch");

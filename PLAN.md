@@ -967,7 +967,19 @@ accepted 640x480, the rotating cube was visible, internal sync measured about
 the monitor recovered to the 800x600 simplefb console. P6d is closed. Keep
 75Hz and 1024x768 locked for the next staged gates.
 
-75Hz and 1024x768 remain locked. Hardware test over SSH:
+**P6e 640x480@75 refresh/PLL gate implemented 2026-07-18; awaiting silicon
+validation.** `L10GL_REFRESH=75` now selects the existing fixed 75Hz timing
+only with `L10GL_MODESET=native`; omitting it retains the proven 60Hz default.
+This gate deliberately reuses 640x480's verified resolution, pitch, RGB555
+layout, and 4MB double-buffer+Z allocation, isolating the new 31.5MHz
+programmable DCLK and 75Hz timing image. DB019-B section 9.1's M/N/R and
+135-270MHz VCO limits produce `SR12=63`, `SR13=56`, 31.500MHz at 13ppm error;
+section 9.2's immediate-load sequence is the same SR12/SR13 plus SR15.5 pulse
+already proven by P6c. Unit tests pin all 25 standard CRTC bytes, `CR5D=00`,
+the 3us FIFO-fetch value, sync polarity, and PLL bytes. The gate still rejects
+800x600@75 and both 1024x768 entries.
+
+P6d's signed-off 60Hz hardware test over SSH:
 
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
@@ -976,6 +988,18 @@ sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
 
 Acceptance confirmed: the monitor synchronizes at 640x480, the cube is visible,
 and Ctrl-C returns to the pre-run 800x600 console.
+
+P6e hardware test over SSH:
+
+```
+sudo env L10GL_BACKEND=virge L10GL_MODESET=native L10GL_REFRESH=75 \
+  tools/l10gl-run -- ./cube 640 480 16
+```
+
+Expected diagnostic sync is approximately 37.50kHz / 75.00Hz. Acceptance
+requires a visible stable cube at 640x480@75 and recovery of the original
+800x600 simplefb console after Ctrl-C. Keep the other 75Hz mode and all
+1024x768 modes locked until this gate is confirmed.
 
 The end-state for the primary card: set the mode by programming the chip
 directly, so L10GL runs even on a `vesafb`/fixed-mode console — the same

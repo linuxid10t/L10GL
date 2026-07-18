@@ -2041,6 +2041,8 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 {
     const struct virge_mode *native_mode = NULL;
     const char *modeset = getenv("L10GL_MODESET");
+    const char *refresh = getenv("L10GL_REFRESH");
+    unsigned native_refresh = 60;
     int native_requested = 0;
     int ret;
     /* The S3d engine's destination format field (2D CMD_SET bits 4-2)
@@ -2071,20 +2073,36 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
                             "supports only 16-bit RGB555\n");
             return -ENOTSUP;
         }
-        native_mode = virge_mode_find((unsigned)width, (unsigned)height, 60);
+        if (refresh && *refresh) {
+            if (strcmp(refresh, "60") == 0)
+                native_refresh = 60;
+            else if (strcmp(refresh, "75") == 0)
+                native_refresh = 75;
+            else {
+                fprintf(stderr, "S3 ViRGE: invalid L10GL_REFRESH '%s' "
+                                "(fixed native modes support 60 or 75)\n",
+                        refresh);
+                return -EINVAL;
+            }
+        }
+        native_mode = virge_mode_find((unsigned)width, (unsigned)height,
+                                      native_refresh);
         if (!native_mode) {
-            fprintf(stderr, "S3 ViRGE: no fixed 60 Hz native mode for "
-                            "%dx%d\n", width, height);
+            fprintf(stderr, "S3 ViRGE: no fixed %u Hz native mode for "
+                            "%dx%d\n", native_refresh, width, height);
             return -ENOTSUP;
         }
-        /* P6d opens only the first hardware-verified resolution change after
-         * the 800x600 clock gate. Keep 75Hz and 1024x768 locked. */
-        if (!((width == 800 && height == 600) ||
-              (width == 640 && height == 480))) {
+        /* P6e changes only the already-verified 640x480 raster's refresh and
+         * PLL. Keep 800x600@75 and both 1024x768 modes locked until their own
+         * isolated hardware gates. */
+        if (!((width == 800 && height == 600 && native_refresh == 60) ||
+              (width == 640 && height == 480 &&
+               (native_refresh == 60 || native_refresh == 75)))) {
             fprintf(stderr, "S3 ViRGE: P6 hardware gates permit only "
-                            "800x600@60 and 640x480@60; requested %dx%d. "
-                            "Higher modes remain locked pending validation.\n",
-                    width, height);
+                            "800x600@60, 640x480@60, and 640x480@75; "
+                            "requested %dx%d@%u. Other modes remain locked "
+                            "pending validation.\n",
+                    width, height, native_refresh);
             return -EAGAIN;
         }
     }
