@@ -27,23 +27,29 @@ DEMOS = $(FRONTEND_DEMOS) fbtest
 # the complete library; archive extraction pulls only the objects they use.
 TESTS = scantest filltest tritest gltritest fliptest dztest seamtest \
 	cubefb diagap texprobe
+CHECK_PROGRAMS = test-swrast
 
 PROGRAMS = $(DEMOS) $(TESTS)
 PROGRAM_OBJS = $(addprefix demos/,$(addsuffix .o,$(PROGRAMS)))
-ALL_OBJS = $(LIB_OBJS) $(PROGRAM_OBJS)
+CHECK_OBJS = tests/test_swrast.o
+ALL_OBJS = $(LIB_OBJS) $(PROGRAM_OBJS) $(CHECK_OBJS)
 DEPS = $(ALL_OBJS:.o=.d)
 
 .PHONY: all check clean
 
 all: $(LIBRARY) $(PROGRAMS)
 
-check: all
+check: all $(CHECK_PROGRAMS)
 	bash tests/test-l10gl-run.sh
+	./test-swrast
 
 $(LIBRARY): $(LIB_OBJS)
 	$(AR) rcs $@ $^
 
 $(FRONTEND_DEMOS) $(TESTS): %: demos/%.o $(LIBRARY)
+	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
+
+test-swrast: tests/test_swrast.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 # CPU-drawn fbdev pattern; deliberately independent of L10GL and PCI access.
@@ -54,6 +60,6 @@ fbtest: demos/fbtest.o
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(PROGRAMS) $(LIBRARY) $(ALL_OBJS) $(DEPS)
+	rm -f $(PROGRAMS) $(CHECK_PROGRAMS) $(LIBRARY) $(ALL_OBJS) $(DEPS)
 
 -include $(DEPS)
