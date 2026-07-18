@@ -23,7 +23,7 @@
 struct l10gl_vertex {
     float x, y;       /* Screen coordinates (pixels) */
     float z;          /* Depth value (0.0 = near, 1.0 = far) */
-    float w;          /* 1/Z_eye for perspective correction (1.0 = disable) */
+    float w;          /* 1/clip_W; equals 1/positive eye depth for perspective */
     float r, g, b, a; /* Color (0.0 to 1.0) */
     float u, v;       /* Texture coordinates (0.0 to 1.0) */
 };

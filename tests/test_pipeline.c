@@ -196,7 +196,7 @@ static void test_triangle_transform_and_attributes(struct l10gl_ctx *ctx)
     expect_float("v2 screen x", triangle->v[2].x, 50);
     expect_float("v2 screen y", triangle->v[2].y, 20);
     expect_float("window depth", triangle->v[0].z, .5f);
-    expect_float("X2 affine W", triangle->v[0].w, 1);
+    expect_float("identity-projection W", triangle->v[0].w, 1);
     expect_float("captured v0 red", triangle->v[0].r, .1f);
     expect_float("captured v1 green", triangle->v[1].g, .21f);
     expect_float("captured v2 alpha", triangle->v[2].a, .33f);
@@ -379,6 +379,9 @@ static void test_near_plane_clipping(struct l10gl_ctx *ctx)
     expect_float("near intersection left X", first->v[1].x, 33.3333333f);
     expect_float("near intersection left Y", first->v[1].y, 40);
     expect_float("near intersection depth 0", first->v[0].z, 0);
+    expect_float("near intersection reciprocal W", first->v[0].w, 1);
+    expect_float("other near intersection reciprocal W", first->v[1].w, 1);
+    expect_float("inside source reciprocal W", first->v[2].w, .5f);
     expect_float("right intersection color", first->v[0].r, .233333333f);
     expect_float("left intersection color", first->v[1].r, .166666667f);
     expect_float("right intersection U", first->v[0].u, .273333333f);
@@ -464,6 +467,77 @@ static void test_triangle_scan_guard(struct l10gl_ctx *ctx)
     expect_int("oversized triangle rejected", capture.triangle_count, 0);
 
     l10gl_viewport(ctx, 0, 0, 100, 80);
+}
+
+static void test_perspective_texture_w(struct l10gl_ctx *ctx)
+{
+    struct l10gl_texture texture = { .width = 1, .height = 1 };
+    const struct captured_triangle *triangle;
+
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
+    expect_int("W perspective setup", l10gl_perspective(ctx, 90, 1, 1, 10),
+               0);
+    l10gl_viewport(ctx, 0, 0, 100, 80);
+    l10gl_cull_face(ctx, L10GL_CULL_NONE);
+    l10gl_bind_texture(ctx, &texture);
+
+    reset_capture();
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_texcoord2f(ctx, 0, 0);
+    l10gl_vertex3f(ctx, -.5f, -.5f, -2);
+    l10gl_texcoord2f(ctx, 1, 0);
+    l10gl_vertex3f(ctx,  .5f, -.5f, -4);
+    l10gl_texcoord2f(ctx, 0, 1);
+    l10gl_vertex3f(ctx,  0.0f, .5f, -5);
+    l10gl_end(ctx);
+    expect_int("perspective W triangle count", capture.triangle_count, 1);
+    triangle = &capture.triangles[0];
+    expect_int("perspective W textured dispatch", triangle->textured, 1);
+    expect_float("depth 2 reciprocal W", triangle->v[0].w, .5f);
+    expect_float("depth 4 reciprocal W", triangle->v[1].w, .25f);
+    expect_float("depth 5 reciprocal W", triangle->v[2].w, .2f);
+
+    /* MODELVIEW translation contributes to eye depth before projection. */
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_translatef(ctx, 0, 0, -4);
+    reset_capture();
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, -.25f, -.25f, 0);
+    l10gl_vertex3f(ctx,  .25f, -.25f, 0);
+    l10gl_vertex3f(ctx,  0.0f,  .25f, 0);
+    l10gl_end(ctx);
+    expect_int("translated W triangle count", capture.triangle_count, 1);
+    expect_float("translated eye-depth W", capture.triangles[0].v[0].w,
+                 .25f);
+
+    /* Orthographic clip W is constant 1, so texturing remains affine even
+     * when eye-space Z differs across the primitive. */
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
+    expect_int("W orthographic setup",
+               l10gl_ortho(ctx, -1, 1, -1, 1, 1, 10), 0);
+    reset_capture();
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, -.5f, -.5f, -2);
+    l10gl_vertex3f(ctx,  .5f, -.5f, -4);
+    l10gl_vertex3f(ctx,  0.0f, .5f, -5);
+    l10gl_end(ctx);
+    expect_int("orthographic W triangle count", capture.triangle_count, 1);
+    expect_float("orthographic W 0", capture.triangles[0].v[0].w, 1);
+    expect_float("orthographic W 1", capture.triangles[0].v[1].w, 1);
+    expect_float("orthographic W 2", capture.triangles[0].v[2].w, 1);
+
+    l10gl_bind_texture(ctx, NULL);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
 }
 
 static void submit_lighting_triangle(struct l10gl_ctx *ctx)
@@ -619,6 +693,7 @@ int main(void)
     test_culling_and_clip_rejection(&ctx);
     test_near_plane_clipping(&ctx);
     test_triangle_scan_guard(&ctx);
+    test_perspective_texture_w(&ctx);
     test_directional_lighting(&ctx);
     l10gl_destroy(&ctx);
 
@@ -627,6 +702,6 @@ int main(void)
         return 1;
     }
     printf("test-pipeline: PASS (attributes, assembly, transforms, culling, "
-           "near clipping, interpolation, scan guard, lighting)\n");
+           "near clipping, interpolation, scan guard, lighting, perspective W)\n");
     return 0;
 }

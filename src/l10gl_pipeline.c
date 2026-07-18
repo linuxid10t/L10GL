@@ -193,8 +193,10 @@ static int project_clip_vertex(const struct l10gl_ctx *ctx,
     output->screen.x = window[0];
     output->screen.y = window[1];
     output->screen.z = window[2];
-    /* X5 will replace this affine value with reciprocal eye-space depth. */
-    output->screen.w = 1.0f;
+    /* Reciprocal homogeneous W drives perspective-correct attribute
+     * interpolation. With L10GL's standard perspective matrices clip W is
+     * positive eye-space depth; orthographic projection leaves it at 1. */
+    output->screen.w = 1.0f / input->clip[3];
     output->screen.r = input->r;
     output->screen.g = input->g;
     output->screen.b = input->b;
