@@ -239,6 +239,59 @@ static int test_rgb565_dump(const char *path)
     return failed ? -1 : 0;
 }
 
+static int test_double_buffered_swaps(const char *directory)
+{
+    char dump_template[256];
+    char first_path[256];
+    char second_path[256];
+    struct l10gl_ctx ctx;
+    struct rgb *first = NULL;
+    struct rgb *second = NULL;
+    int failed = 0;
+
+    snprintf(dump_template, sizeof(dump_template), "%s/swap%%02d.ppm",
+             directory);
+    snprintf(first_path, sizeof(first_path), "%s/swap00.ppm", directory);
+    snprintf(second_path, sizeof(second_path), "%s/swap01.ppm", directory);
+    if (setenv("L10GL_SWRAST_DUMP", dump_template, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 3, 2, 3) < 0)
+        return -1;
+
+    l10gl_clear_color(&ctx, 1.0f, 0.0f, 0.0f);
+    l10gl_clear(&ctx);
+    if (access(first_path, F_OK) == 0) {
+        fprintf(stderr, "test-swrast: frame became visible before swap\n");
+        failed = 1;
+        goto done;
+    }
+    l10gl_swap_buffers(&ctx);
+
+    l10gl_clear_color(&ctx, 0.0f, 1.0f, 0.0f);
+    l10gl_clear(&ctx);
+    l10gl_swap_buffers(&ctx);
+
+    first = read_ppm(first_path, 3, 2);
+    second = read_ppm(second_path, 3, 2);
+    if (!first || !second) {
+        failed = 1;
+        goto done;
+    }
+    failed |= expect_pixel(first, 3, 1, 1, 255, 0, 0,
+                           "first completed back buffer");
+    failed |= expect_pixel(second, 3, 1, 1, 0, 255, 0,
+                           "second completed back buffer");
+
+done:
+    free(first);
+    free(second);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+    unlink(first_path);
+    unlink(second_path);
+    return failed ? -1 : 0;
+}
+
 int main(void)
 {
     char directory[] = "/tmp/l10gl-swrast-test.XXXXXX";
@@ -260,6 +313,7 @@ int main(void)
 
     failed |= test_reference_frame(reference_path);
     failed |= test_rgb565_dump(rgb565_path);
+    failed |= test_double_buffered_swaps(directory);
 
     unlink(reference_path);
     unlink(rgb565_path);
@@ -269,6 +323,6 @@ int main(void)
         return 1;
     }
     printf("test-swrast: PASS (coverage, blend, depth, perspective, "
-           "bilinear, RGB565, PPM)\n");
+           "bilinear, RGB565, PPM, double buffering)\n");
     return 0;
 }

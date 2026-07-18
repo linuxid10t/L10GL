@@ -27,8 +27,10 @@ The X6 model-space `cube` and `textured_cube` ports render correctly and
 tear-free on that machine, and produce byte-identical first frames to their
 former screen-space implementations under swrast. The Matrox MGA-1064SG
 backend builds and remains structurally supported, but has not yet been
-validated on hardware. The software backend provides deterministic offscreen
-rendering and pixel-level tests on machines without either card.
+validated on hardware. The software backend provides deterministic,
+double-buffered offscreen rendering and pixel-level tests on machines without
+either card. Its fbdev path renders privately and publishes completed frames
+only from `l10gl_swap_buffers`, using the fbdev vsync ioctl when available.
 
 P2 console ownership is also verified on the target system: direct swrast
 through the 800x600x32 `simple-framebuffer` moved VT1 to `KD_GRAPHICS`, kept the

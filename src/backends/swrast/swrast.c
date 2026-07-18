@@ -38,13 +38,17 @@ struct swrast_texture {
 };
 
 struct swrast_private {
-    uint8_t *color;
+    uint8_t *color;          /* current private render target */
+    uint8_t *front;          /* last completed/offscreen or visible fb buffer */
+    uint8_t *owned_color[2];
+    size_t color_size;
     float *depth;
     size_t stride;
 
     void *fb_map;
     size_t fb_map_len;
     int fb_fd;
+    int vsync_state;        /* 0 unknown, 1 supported, -1 unavailable */
 
     struct fb_bitfield red;
     struct fb_bitfield green;
@@ -101,10 +105,11 @@ static float unpack_channel(uint32_t pixel, const struct fb_bitfield *field,
     return (float)((pixel >> field->offset) & max) / (float)max;
 }
 
-static uint32_t load_pixel(const struct l10gl_ctx *ctx,
-                           const struct swrast_private *priv, int x, int y)
+static uint32_t load_pixel_from(const struct l10gl_ctx *ctx,
+                                const struct swrast_private *priv,
+                                const uint8_t *color, int x, int y)
 {
-    const uint8_t *src = priv->color + (size_t)y * priv->stride
+    const uint8_t *src = color + (size_t)y * priv->stride
                        + (size_t)x * (size_t)ctx->bpp;
     uint32_t pixel = 0;
 
@@ -130,7 +135,23 @@ static struct swrast_color read_pixel(const struct l10gl_ctx *ctx,
                                       const struct swrast_private *priv,
                                       int x, int y)
 {
-    uint32_t pixel = load_pixel(ctx, priv, x, y);
+    uint32_t pixel = load_pixel_from(ctx, priv, priv->color, x, y);
+    struct swrast_color color = {
+        unpack_channel(pixel, &priv->red, 0.0f),
+        unpack_channel(pixel, &priv->green, 0.0f),
+        unpack_channel(pixel, &priv->blue, 0.0f),
+        unpack_channel(pixel, &priv->transp, 1.0f),
+    };
+
+    return color;
+}
+
+static struct swrast_color read_pixel_from(const struct l10gl_ctx *ctx,
+                                           const struct swrast_private *priv,
+                                           const uint8_t *pixels,
+                                           int x, int y)
+{
+    uint32_t pixel = load_pixel_from(ctx, priv, pixels, x, y);
     struct swrast_color color = {
         unpack_channel(pixel, &priv->red, 0.0f),
         unpack_channel(pixel, &priv->green, 0.0f),
@@ -474,7 +495,7 @@ static int validate_dump_template(const char *text, int *has_frame)
     return 0;
 }
 
-static int swrast_dump_frame(struct l10gl_ctx *ctx)
+static int swrast_dump_frame(struct l10gl_ctx *ctx, const uint8_t *pixels)
 {
     struct swrast_private *priv = SWRAST_PRIV(ctx);
     char path[PATH_MAX];
@@ -512,7 +533,8 @@ static int swrast_dump_frame(struct l10gl_ctx *ctx)
     fprintf(file, "P6\n%d %d\n255\n", ctx->width, ctx->height);
     for (int y = 0; y < ctx->height; y++) {
         for (int x = 0; x < ctx->width; x++) {
-            struct swrast_color color = read_pixel(ctx, priv, x, y);
+            struct swrast_color color = read_pixel_from(ctx, priv, pixels,
+                                                        x, y);
             row[x * 3 + 0] = (uint8_t)(clamp01(color.r) * 255.0f + 0.5f);
             row[x * 3 + 1] = (uint8_t)(clamp01(color.g) * 255.0f + 0.5f);
             row[x * 3 + 2] = (uint8_t)(clamp01(color.b) * 255.0f + 0.5f);
@@ -562,13 +584,17 @@ static int init_offscreen(struct l10gl_ctx *ctx, struct swrast_private *priv,
 
     priv->stride = (size_t)width * (size_t)bpp;
     color_size = priv->stride * (size_t)height;
-    priv->color = calloc(1, color_size);
-    if (!priv->color)
+    priv->owned_color[0] = calloc(1, color_size);
+    priv->owned_color[1] = calloc(1, color_size);
+    if (!priv->owned_color[0] || !priv->owned_color[1])
         return -ENOMEM;
+    priv->color = priv->owned_color[0];
+    priv->front = priv->owned_color[1];
+    priv->color_size = color_size;
     set_offscreen_format(priv, bpp);
     l10gl_mode_set_linear(ctx, width, height, bpp * 8,
                           (uint32_t)priv->stride, NULL);
-    printf("swrast: using offscreen %dx%d %dbpp buffer\n",
+    printf("swrast: using double-buffered offscreen %dx%d %dbpp buffer\n",
            width, height, bpp * 8);
     return 0;
 }
@@ -618,7 +644,15 @@ static int init_fbdev(struct l10gl_ctx *ctx, struct swrast_private *priv,
     priv->blue = var->blue;
     priv->transp = var->transp;
     l10gl_mode_from_fbdev(ctx, &mode);
-    printf("swrast: using %s current mode %dx%d %dbpp, stride %zu\n",
+    priv->color_size = priv->stride * (size_t)ctx->height;
+    priv->front = priv->color;
+    priv->owned_color[0] = malloc(priv->color_size);
+    if (!priv->owned_color[0])
+        return -ENOMEM;
+    memcpy(priv->owned_color[0], priv->front, priv->color_size);
+    priv->color = priv->owned_color[0];
+    printf("swrast: using %s current mode %dx%d %dbpp, stride %zu "
+           "(private back buffer)\n",
            path, ctx->width, ctx->height, ctx->bpp * 8, priv->stride);
     return 0;
 }
@@ -682,8 +716,8 @@ static int swrast_init(struct l10gl_ctx *ctx, int width, int height, int bpp)
 fail:
     if (priv->fb_map)
         munmap(priv->fb_map, priv->fb_map_len);
-    else
-        free(priv->color);
+    free(priv->owned_color[0]);
+    free(priv->owned_color[1]);
     if (priv->fb_fd >= 0)
         close(priv->fb_fd);
     free(priv->depth);
@@ -701,15 +735,15 @@ static void swrast_cleanup(struct l10gl_ctx *ctx)
     if (!priv)
         return;
     if (priv->dump_template && priv->frame == 0)
-        swrast_dump_frame(ctx);
+        swrast_dump_frame(ctx, priv->color);
     for (texture = priv->textures; texture; texture = next) {
         next = texture->next;
         free(texture);
     }
     if (priv->fb_map)
         munmap(priv->fb_map, priv->fb_map_len);
-    else
-        free(priv->color);
+    free(priv->owned_color[0]);
+    free(priv->owned_color[1]);
     if (priv->fb_fd >= 0)
         close(priv->fb_fd);
     free(priv->depth);
@@ -886,12 +920,40 @@ static void swrast_tex_parameter(struct l10gl_ctx *ctx,
 
 static void swrast_wait(struct l10gl_ctx *ctx)
 {
-    (void)ctx;
+    struct swrast_private *priv = SWRAST_PRIV(ctx);
+    unsigned int crtc = 0;
+
+    if (priv->fb_fd < 0 || priv->vsync_state < 0)
+        return;
+    if (ioctl(priv->fb_fd, FBIO_WAITFORVSYNC, &crtc) == 0) {
+        priv->vsync_state = 1;
+        return;
+    }
+    if (priv->vsync_state == 0)
+        fprintf(stderr, "swrast: fbdev vsync wait unavailable: %s; "
+                        "publishing without synchronization\n",
+                strerror(errno));
+    priv->vsync_state = -1;
 }
 
 static void swrast_swap_buffers(struct l10gl_ctx *ctx)
 {
-    swrast_dump_frame(ctx);
+    struct swrast_private *priv = SWRAST_PRIV(ctx);
+    const uint8_t *completed = priv->color;
+
+    if (priv->fb_map) {
+        size_t row_bytes = (size_t)ctx->width * (size_t)ctx->bpp;
+
+        swrast_wait(ctx);
+        for (int y = 0; y < ctx->height; y++)
+            memcpy(priv->front + (size_t)y * priv->stride,
+                   completed + (size_t)y * priv->stride, row_bytes);
+    } else {
+        priv->front = priv->color;
+        priv->color = priv->color == priv->owned_color[0]
+                    ? priv->owned_color[1] : priv->owned_color[0];
+    }
+    swrast_dump_frame(ctx, completed);
 }
 
 const struct l10gl_backend swrast_backend = {

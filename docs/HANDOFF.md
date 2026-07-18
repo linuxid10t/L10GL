@@ -81,6 +81,17 @@ run unbound `simple-framebuffer`, rendered the ViRGE cube for 176 frames with
 P2 correctly inactive, restored native scanout, then rebound the framebuffer
 driver and fbcon. No regressions were observed.
 
+**Phase 3 P5a swrast double buffering implemented 2026-07-18; fbdev visual
+sign-off pending.** swrast no longer draws directly into mapped scanout. Its
+fbdev path renders into a private stride-matched back buffer, optionally waits
+for `FBIO_WAITFORVSYNC`, and copies only completed visible rows during
+`l10gl_swap_buffers`. Offscreen mode rotates two owned color buffers, and PPM
+dumps explicitly read the just-completed buffer. `test-swrast` verifies that
+presentation does not occur before swap and that successive red/green frames
+remain distinct. The full normal suite and the five automated binaries under
+ASan/UBSan pass (LeakSanitizer disabled because the command supervisor uses
+ptrace). P5b MGA-1064 page flipping remains next and hardware-unverified.
+
 ## Test setup (fixed, do not re-derive)
 
 - Machine `david-ta970`: S3 ViRGE/DX (PCI id 0x8a01), 4MB VRAM,

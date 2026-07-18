@@ -804,10 +804,19 @@ one register instead of two split fields. Flip at vsync using the
 existing `virge_wait_vsync`.
 
 ### P5. swrast + mga1064 double buffering
-swrast: trivial (two malloc'd buffers or fbdev pan via
-`FBIOPAN_DISPLAY`). mga1064: implement the same VRAM-layout + CRTC
-start-address pattern (CRTCEXT0 on MGA), untested-on-HW but structurally
-complete.
+
+**P5a swrast complete 2026-07-18; P5b MGA-1064 pending.** Offscreen swrast
+now rotates two private color buffers, and PPM output reads the completed
+buffer only after `l10gl_swap_buffers`. The fbdev path also renders into a
+private back buffer instead of the mapped scanout, waits through
+`FBIO_WAITFORVSYNC` when supported, then publishes the completed rows to the
+visible raster. Unsupported vsync ioctls fall back once without affecting
+rendering. `test-swrast` proves that no frame is dumped before swap and that
+two consecutive swaps preserve distinct completed frames. The direct fbdev
+copy path still needs a target-system visual check.
+
+P5b: mga1064 must implement the same VRAM-layout + CRTC start-address pattern
+(CRTCEXT0 on MGA), untested-on-HW but structurally complete.
 
 ### P6. Native ViRGE mode setting (no fb-driver dependency)
 The end-state for the primary card: set the mode by programming the chip
