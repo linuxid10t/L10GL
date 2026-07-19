@@ -20,6 +20,7 @@
 #include <limits.h>
 
 #include "l10gl.h"
+#include "l10gl_fps.h"
 
 #define CAMERA_DIST 5.0f
 #define FOV_Y_DEGREES 53.130102f
@@ -266,11 +267,13 @@ int main(int argc, char **argv)
     float angle = 0.0f;
     int frame = 0;
     int frame_limit = frame_limit_from_env();
+    struct l10gl_fps_counter fps;
 
     printf("Rendering... (Ctrl-C to exit)");
     if (frame_limit)
         printf("  [L10GL_FRAMES=%d]", frame_limit);
     putchar('\n');
+    l10gl_fps_start(&fps);
 
     while (running) {
         l10gl_clear(&ctx);
@@ -314,6 +317,7 @@ int main(int argc, char **argv)
         l10gl_swap_buffers(&ctx);   /* tear-free: publish frame at vblank, flip render target */
 
         frame++;
+        l10gl_fps_frame(&fps);
         if (frame_limit && frame >= frame_limit) {
             printf("Frame limit reached.\n");
             break;
@@ -323,10 +327,9 @@ int main(int argc, char **argv)
         if (angle > 360.0f)
             angle -= 360.0f;
 
-        if (frame % 60 == 0)
-            printf("Frame %d\n", frame);
     }
 
+    l10gl_fps_finish(&fps);
     printf("\nExiting after %d frames.\n", frame);
     l10gl_destroy(&ctx);
     return 0;

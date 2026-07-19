@@ -70,6 +70,11 @@ Matrox parity is deferred until a Mystique is installed for testing; the
 existing MGA-1064 code and regression tests remain in the tree. Performance
 work on the verified ViRGE path is next.
 
+The animated `cube`, `textured_cube`, and `gears` demos report completed-frame
+FPS every two seconds and a whole-run average at exit. Measurements include
+engine completion, page-flip presentation, and vsync. Use the same resolution
+and `L10GL_FRAMES` count for meaningful before/after comparisons.
+
 | Backend | Hardware | Status |
 |---|---|---|
 | `virge` | S3 ViRGE family | Primary; ViRGE/DX verified on silicon |
@@ -279,6 +284,19 @@ env L10GL_BACKEND=swrast L10GL_FRAMES=1 ./cube
 env L10GL_BACKEND=swrast L10GL_FRAMES=1 ./gears
 env L10GL_BACKEND=swrast L10GL_FRAMES=1 ./gltexture
 ```
+
+Collect the ViRGE performance baseline over SSH before enabling Phase 6
+submission optimizations:
+
+```sh
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./textured_cube 800 600 16
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./gears 800 600 16
+```
+
+Retain the `L10GL FPS:` interval lines and the `L10GL FPS final:` line from
+each run. Vsync may cap lightweight workloads near the monitor refresh rate;
+the heavier gears workload helps expose submission overhead.
 
 An unknown override is rejected and prints the available backend names. If no
 supported card is present, automatic selection uses offscreen swrast without

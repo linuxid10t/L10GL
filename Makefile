@@ -14,6 +14,7 @@ LIB_SRCS = \
 	src/l10gl.c \
 	src/console.c \
 	src/fbdev.c \
+	src/l10gl_fps.c \
 	src/l10gl_gl.c \
 	src/l10gl_pipeline.c \
 	src/l10gl_xform.c \
@@ -34,13 +35,13 @@ DEMOS = $(FRONTEND_DEMOS) fbtest
 TESTS = scantest filltest tritest gltritest fliptest dztest seamtest \
 	cubefb diagap texprobe
 CHECK_PROGRAMS = test-console test-mode test-swrast test-xform test-pipeline \
-	test-gl test-mga1064 test-virge-mode
+	test-gl test-fps test-mga1064 test-virge-mode
 
 PROGRAMS = $(DEMOS) $(TESTS)
 PROGRAM_OBJS = $(addprefix demos/,$(addsuffix .o,$(PROGRAMS)))
 CHECK_OBJS = tests/test_console.o tests/test_mode.o tests/test_swrast.o \
 	tests/test_xform.o tests/test_pipeline.o tests/test_mga1064.o \
-	tests/test_gl.o tests/test_virge_mode.o
+	tests/test_gl.o tests/test_fps.o tests/test_virge_mode.o
 ALL_OBJS = $(LIB_OBJS) $(PROGRAM_OBJS) $(CHECK_OBJS)
 DEPS = $(ALL_OBJS:.o=.d)
 
@@ -56,6 +57,7 @@ check: all $(CHECK_PROGRAMS)
 	./test-xform
 	./test-pipeline
 	./test-gl
+	./test-fps
 	./test-mga1064
 	./test-virge-mode
 
@@ -81,6 +83,9 @@ test-pipeline: tests/test_pipeline.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 test-gl: tests/test_gl.o $(LIBRARY)
+	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
+
+test-fps: tests/test_fps.o $(LIBRARY)
 	$(CC) -o $@ $< $(LIBRARY) $(LDFLAGS)
 
 test-mga1064: tests/test_mga1064.o $(LIBRARY)

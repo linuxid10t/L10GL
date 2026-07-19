@@ -1211,6 +1211,17 @@ card (human validation, later).
 
 ## Phase 6 — Performance (only after everything above is stable)
 
+**B0 FPS instrumentation implemented 2026-07-18; hardware baseline
+pending.** `src/l10gl_fps.c` provides a shared `CLOCK_MONOTONIC` counter with
+pure timestamp-injection tests. `cube`, `textured_cube`, and `gears` count a
+frame only after engine completion and buffer swap, print parser-friendly
+two-second interval plus cumulative FPS, and print a final whole-run average.
+This deliberately includes vsync/presentation in the user-visible rate.
+Use `L10GL_FRAMES=600` at 800x600 on the ViRGE for stable baseline numbers
+before changing submission behavior. `test-fps` pins interval rollover and
+whole-run math. Do not begin item 1 until those three baseline averages are
+recorded.
+
 Ordered by expected win/effort on the ViRGE:
 
 1. **FIFO-aware submission.** Every draw currently spins for full engine
@@ -1229,8 +1240,9 @@ Ordered by expected win/effort on the ViRGE:
 4. **Triangle-strip aware register reuse** and, much later, the ViRGE DMA
    command queue (probably not worth it for this project's goals).
 
-Each item needs before/after frame-rate numbers from the cube demo
-(add a simple FPS counter to the demos first).
+Each item needs before/after frame-rate numbers from the same demo, mode, and
+frame count. FPS instrumentation is now present; retain the raw interval and
+final-average logs with every optimization checkpoint.
 
 ---
 

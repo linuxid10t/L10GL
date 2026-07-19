@@ -366,6 +366,25 @@ and `test-mga1064` coverage, but proceed directly to Phase 6 performance work.
 The first task is an FPS counter for stable before/after measurements, then
 FIFO-aware ViRGE submission using MM8504 bits 12-8 as documented.
 
+**Phase 6 B0 FPS instrumentation implemented 2026-07-18; ViRGE baseline
+pending.** A shared monotonic counter now drives `cube`, `textured_cube`, and
+`gears`. Frames are counted after wait/swap, interval reports appear every two
+seconds, and exit prints a whole-run average. `test-fps` uses injected
+nanosecond timestamps to pin the math; five-frame swrast smoke runs pass for
+all three demos. Before changing the ViRGE wait strategy, clean-build commit
+with B0 and run all three commands below over SSH:
+
+```
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./textured_cube 800 600 16
+sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./gears 800 600 16
+```
+
+Record every `L10GL FPS:` line and each final average. Do not compare runs
+with different modes or frame counts. A near-60 result means vsync is the
+limiter for that workload; preserve it as presentation evidence, while gears
+is expected to be the more sensitive engine/submission benchmark.
+
 ```
 sudo env L10GL_BACKEND=virge L10GL_MODESET=native \
   tools/l10gl-run -- ./cube 800 600 16

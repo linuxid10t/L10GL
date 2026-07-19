@@ -16,6 +16,7 @@
 #include <GL/gl.h>
 
 #include "l10gl.h"
+#include "l10gl_fps.h"
 
 #define PI 3.14159265358979323846f
 
@@ -208,6 +209,7 @@ int main(int argc, char **argv)
     int frame = 0;
     GLfloat angle = 0;
     struct l10gl_ctx *ctx;
+    struct l10gl_fps_counter fps;
     GLfloat aspect;
 
     if (argc >= 3) {
@@ -251,21 +253,22 @@ int main(int argc, char **argv)
 
     printf("Rendering... (Ctrl-C to exit)%s\n",
            static_mode ? " [L10GL_STATIC: one frame, then idle]" : "");
+    l10gl_fps_start(&fps);
     while (running) {
         draw_gears(angle);
         glFinish();
         l10glSwapBuffers();
         frame++;
+        l10gl_fps_frame(&fps);
 
         if ((frame_limit && frame >= frame_limit) || static_mode)
             break;
         angle += 2.0f;
         if (angle >= 360.0f)
             angle -= 360.0f;
-        if (frame % 60 == 0)
-            printf("Frame %d\n", frame);
     }
 
+    l10gl_fps_finish(&fps);
     if (static_mode && running) {
         printf("Static frame rendered. Ctrl-C to exit.\n");
         while (running)
