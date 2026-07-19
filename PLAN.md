@@ -1232,6 +1232,18 @@ completed on the ViRGE/DX with normal console recovery. Results were `cube`
 FPS (unchanged). This is performance-neutral under the presentation-limited
 benchmark but removes unnecessary full-idle serialization safely.
 
+**Item 2 dirty-state tracking implemented 2026-07-18; real-hardware
+validation pending.** A hardware-independent register cache computes dirty
+masks before reserving FIFO entries. The 2D path tracks destination base,
+stride, and both clip registers; Z clear leaves the cache accurately pointed
+at Z instead of eagerly restoring two framebuffer registers. The 3D path
+tracks seven shared registers and invalidates only `Z_STRIDE` and `TEX_BASE`
+after a 2D command, matching the established ViRGE/DX silicon quirk. Buffer
+flips and texture binds become normal value changes. Cleanup reports emitted
+versus considered 2D/3D state writes, and `test-virge-mode` pins initial,
+unchanged, changed-value, and targeted-invalidation behavior. Compare the
+three 600-frame workloads against the item-1 results before marking verified.
+
 Ordered by expected win/effort on the ViRGE:
 
 1. **FIFO-aware submission.** Previously every draw spun for full engine
@@ -1244,6 +1256,8 @@ Ordered by expected win/effort on the ViRGE:
 2. **Dirty-state tracking.** Skip re-writing CLIP/STRIDE/DEST_BASE per
    draw (`virge_fill_rect` reprograms them every call); cache last-written
    values in `virge_ctx`, invalidate on Z-clear's base swap.
+   Implemented; hardware correctness, cache-count, and performance validation
+   pending.
 3. **Autoexecute mode.** Program CMD_SET once per state change with
    `VIRGE_CMD_AUTOEXEC`, then per-triangle write only the geometry
    registers ending at the TY01_Y12 kick (`virge.h:295`) — roughly halves

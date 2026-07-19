@@ -432,7 +432,7 @@ static void virge_be_fill_rect(struct l10gl_ctx *ctx,
  * Texture management
  *
  * tex_image_2d: Upload texture data to offscreen VRAM via the bump allocator.
- * bind_texture: Program TEX_BASE and cache CMD_SET bits for this texture.
+ * bind_texture: Cache TEX_BASE/stride and CMD_SET bits for this texture.
  * tex_parameter: Update cached filter/wrap mode.
  * ======================================================================== */
 
@@ -490,12 +490,11 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
 
     uint32_t tex_addr = (uint32_t)(uintptr_t)tex->backend_data;
 
-    /* Program TEX_BASE (quadword aligned) and cache it so the per-primitive
-     * re-arm in program_3d_state can restore it after a 2D clear clobbers it
-     * (the Z_STRIDE lesson, commit f0811f1). */
-    virge_wait_fifo(hw, 1);
+    /* Cache TEX_BASE logically; the next textured primitive's dirty-state
+     * planner emits it in FIFO order if the value changed or a 2D command
+     * invalidated it (the Z_STRIDE/TEX_BASE DX silicon lesson).  There is no
+     * reason to force a standalone MMIO write at bind time. */
     hw->tex_base = tex_addr & ~0x7;
-    virge_write32(hw, VIRGE_3D_TEX_BASE, hw->tex_base);
 
     /* Cache the texture SOURCE stride (row pitch = width * bytes/texel) so
      * program_3d_state can program DEST_SRC_STR bits 11:0 with the TEXTURE

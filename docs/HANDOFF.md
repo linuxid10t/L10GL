@@ -388,7 +388,22 @@ completed and restored the console normally. The post-change results were
 `cube` 57.74 FPS (+0.64%), `textured_cube` 30.13 FPS (+0.40%), and `gears`
 30.13 FPS (unchanged). Treat this as performance-neutral at the current
 vsync/presentation cadence; the synchronization change itself is validated.
-The exact repeat commands are:
+These are the comparison numbers for item 2.
+
+**Phase 6 item 2 dirty-state tracking implemented 2026-07-18; hardware
+validation pending.** DB019-B sec.15.3 (absolute PDF p.108) places enhanced
+drawing registers behind the ordered 16x40 S3d FIFO. A generic dirty-mask
+cache now tracks four 2D target registers and seven 3D shared registers.
+FIFO space is reserved for cache misses plus the immediately following
+dynamic writes as one bounded group. Z clear no longer emits an eager
+two-register framebuffer restore; its exact Z target remains cached until a
+later fill or line needs a different base/stride. Every 2D command invalidates
+only 3D `Z_STRIDE` and `TEX_BASE`, the two registers proven clobbered on real
+DX silicon; destination, source stride, Z base, and clip values remain cached.
+Texture bind is now logical state only and the next triangle emits changed
+texture base/stride in FIFO order. `test-virge-mode` pins cache commit/change/
+invalidation semantics. Cleanup prints emitted/considered counts for both
+caches. Use the commands below and retain those count lines as well as FPS.
 
 ```
 sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16

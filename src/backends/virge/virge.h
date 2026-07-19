@@ -102,6 +102,56 @@ static inline unsigned virge_fifo_slots_free(uint32_t status)
     return (status & VIRGE_STATUS_FIFO_FREE_MASK) >>
            VIRGE_STATUS_FIFO_FREE_SHIFT;
 }
+
+/* Small hardware-independent register-value cache used by the 2D and 3D
+ * state planners.  A dirty mask is computed before FIFO space is reserved;
+ * values are committed only as their writes are emitted. */
+#define VIRGE_STATE_CACHE_REGS 7u
+
+struct virge_state_cache {
+    uint32_t valid_mask;
+    uint32_t value[VIRGE_STATE_CACHE_REGS];
+};
+
+static inline uint32_t
+virge_state_dirty_mask(const struct virge_state_cache *cache,
+                       const uint32_t *desired, unsigned count)
+{
+    uint32_t dirty = 0;
+    unsigned i;
+
+    for (i = 0; i < count; i++) {
+        uint32_t bit = 1u << i;
+        if (!(cache->valid_mask & bit) || cache->value[i] != desired[i])
+            dirty |= bit;
+    }
+    return dirty;
+}
+
+static inline unsigned virge_state_dirty_count(uint32_t dirty_mask)
+{
+    unsigned count = 0;
+
+    while (dirty_mask) {
+        count += dirty_mask & 1u;
+        dirty_mask >>= 1;
+    }
+    return count;
+}
+
+static inline void
+virge_state_commit(struct virge_state_cache *cache, unsigned index,
+                   uint32_t value)
+{
+    cache->value[index] = value;
+    cache->valid_mask |= 1u << index;
+}
+
+static inline void
+virge_state_invalidate(struct virge_state_cache *cache, uint32_t mask)
+{
+    cache->valid_mask &= ~mask;
+}
 /* Bit 0 is VSY INT — a LATCHED vertical-sync interrupt status, NOT a
  * live "in retrace" level (DB019-B §22, PDF p.299). Once vsync occurs
  * it reads 1 forever until software writes VSY CLR (Subsystem Control
@@ -255,7 +305,7 @@ static inline unsigned virge_fifo_slots_free(uint32_t status)
  * TY01_Y12 (B57C) executes.
  * ======================================================================== */
 
-/* --- Base addresses and stride (set once at init) --- */
+/* --- Cached base addresses, strides, and clip state --- */
 
 #define VIRGE_3D_Z_BASE         0xB4D4  /* Z-buffer base in VRAM (byte offset, QW aligned) */
 #define VIRGE_3D_DEST_BASE      0xB4D8  /* Destination (framebuffer) base in VRAM */
@@ -618,6 +668,17 @@ struct virge_ctx {
     /* Cached CMD_SET destination format field */
     uint32_t dest_format;   /* VIRGE_DEST_16BPP, etc. */
 
+    /* Last values submitted to the 2D target-state and 3D shared-state
+     * registers.  Cache state follows FIFO order: committed means queued,
+     * not necessarily already rasterized.  2D commands invalidate the two
+     * 3D values proven clobbered on DX silicon (Z_STRIDE and TEX_BASE). */
+    struct virge_state_cache state_2d;
+    struct virge_state_cache state_3d;
+    uint64_t state_2d_considered;
+    uint64_t state_2d_emitted;
+    uint64_t state_3d_considered;
+    uint64_t state_3d_emitted;
+
     /* Cached CMD_SET Z-buffering bits for the 3D triangle paths:
      * ZB mode [25-24], Z compare code [22-20], Z update [23]. Built by
      * the glue (l10gl_virge.c) from the cached depth state (test on/off,
@@ -645,12 +706,11 @@ struct virge_ctx {
                                filter [14-12], blend [16-15], wrap [26] */
     uint32_t tex_base;      /* TEX_BASE (0xB4EC) for the currently-bound
                                texture (quadword-aligned VRAM offset). Cached
-                               so program_3d_state can RE-ARM it per primitive:
+                               so dirty-state tracking can re-arm it after 2D:
                                on real DX silicon, 2D commands (the clear/fill
                                between bind and draw) clobber 3D register
                                state -- the established Z_STRIDE lesson
-                               (commit f0811f1). TEX_BASE is written only in
-                               bind_texture otherwise, so without this re-arm
+                               (commit f0811f1). Without this targeted re-arm
                                the first triangle after any clear reads from a
                                clobbered/default base -> off-texture garbage
                                (texprobe v3 confirmed: solid-red texture still
@@ -664,7 +724,7 @@ struct virge_ctx {
      * pixels for a flat (not mipmapped) texture map", bits 2-0 must be 0).
      * Was wrongly set to the SCREEN stride -- texprobe traced every texel
      * resolving to TEX_BDR_CLR (border) to this (commit following v9).
-     * Cached in bind_texture, re-armed per primitive in program_3d_state. */
+     * Cached at bind and emitted only when dirty by program_3d_state. */
     uint32_t tex_stride;
 
     /* DEBUG OVERRIDE for the texture-perspective U/V scale hunt (texprobe v7).

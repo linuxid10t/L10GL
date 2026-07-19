@@ -379,6 +379,39 @@ static void test_fifo_status_decode(void)
            "FIFO decode ignores adjacent status bits");
 }
 
+static void test_state_cache(void)
+{
+    struct virge_state_cache cache = {0};
+    uint32_t desired[VIRGE_STATE_CACHE_REGS] = {
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70,
+    };
+    uint32_t dirty;
+    unsigned i;
+
+    dirty = virge_state_dirty_mask(&cache, desired,
+                                   VIRGE_STATE_CACHE_REGS);
+    EXPECT(dirty == 0x7fu && virge_state_dirty_count(dirty) == 7u,
+           "empty state cache marks every register dirty");
+    for (i = 0; i < VIRGE_STATE_CACHE_REGS; i++)
+        virge_state_commit(&cache, i, desired[i]);
+    EXPECT(virge_state_dirty_mask(&cache, desired,
+                                  VIRGE_STATE_CACHE_REGS) == 0,
+           "committed state cache suppresses identical values");
+
+    desired[2] = 0x31;
+    dirty = virge_state_dirty_mask(&cache, desired,
+                                   VIRGE_STATE_CACHE_REGS);
+    EXPECT(dirty == (1u << 2) && virge_state_dirty_count(dirty) == 1u,
+           "state cache isolates one changed register");
+    virge_state_commit(&cache, 2, desired[2]);
+    virge_state_invalidate(&cache, (1u << 3) | (1u << 6));
+    dirty = virge_state_dirty_mask(&cache, desired,
+                                   VIRGE_STATE_CACHE_REGS);
+    EXPECT(dirty == ((1u << 3) | (1u << 6)) &&
+           virge_state_dirty_count(dirty) == 2u,
+           "targeted invalidation re-emits only clobbered registers");
+}
+
 int main(void)
 {
     test_fixed_modes();
@@ -387,8 +420,9 @@ int main(void)
     test_crtc_image();
     test_first_gate_image();
     test_fifo_status_decode();
+    test_state_cache();
     if (failed)
         return 1;
-    printf("test-virge-mode: PASS (fixed modes, DCLK PLL, CRTC/save image, FIFO status)\n");
+    printf("test-virge-mode: PASS (fixed modes, DCLK PLL, CRTC/save image, FIFO/state cache)\n");
     return 0;
 }

@@ -307,6 +307,12 @@ The hardware-verified FIFO result is 57.74, 30.13, and 30.13 FPS respectively;
 the sub-one-percent changes are effectively neutral under this
 presentation-limited workload.
 
+The current Phase 6 checkpoint adds dirty-state tracking to the ViRGE 2D target
+and 3D shared registers. At cleanup it prints `state cache emitted X/Y 2D and
+X/Y 3D shared-register writes`; lower emitted counts confirm that unchanged
+state was suppressed. The cache preserves FIFO ordering and selectively
+re-arms the two 3D values known to be clobbered by 2D commands on DX silicon.
+
 An unknown override is rejected and prints the available backend names. If no
 supported card is present, automatic selection uses offscreen swrast without
 attempting MMIO access; it prints a reminder when no dump path was configured.

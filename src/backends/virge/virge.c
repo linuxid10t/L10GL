@@ -1094,67 +1094,124 @@ void virge_swap_buffers(struct virge_ctx *ctx)
 }
 
 /* ========================================================================
- * Global Engine Initialization
+ * Cached Drawing State
  *
- * Sets up the 3D register bank's static registers: destination base,
- * Z-base, strides, and clipping rectangle. These are set once and don't
- * need to be reprogrammed for each triangle.
+ * DB019-B sec.15.3 (absolute PDF p.108) shows the enhanced drawing banks
+ * behind one ordered S3d FIFO.  Cache entries therefore become valid when
+ * their writes are queued, not when the rasterizer becomes idle: later
+ * commands observe them in FIFO order.  The real DX additionally proves that
+ * every 2D command clobbers 3D Z_STRIDE and TEX_BASE; invalidate exactly those
+ * two after each 2D kick while retaining the other values that stick.
  * ======================================================================== */
 
-static void program_3d_state(struct virge_ctx *ctx)
+enum virge_2d_state_index {
+    VIRGE_2D_STATE_DEST_BASE,
+    VIRGE_2D_STATE_DEST_SRC_STR,
+    VIRGE_2D_STATE_CLIP_L_R,
+    VIRGE_2D_STATE_CLIP_T_B,
+    VIRGE_2D_STATE_COUNT
+};
+
+enum virge_3d_state_index {
+    VIRGE_3D_STATE_DEST_BASE,
+    VIRGE_3D_STATE_Z_BASE,
+    VIRGE_3D_STATE_DEST_SRC_STR,
+    VIRGE_3D_STATE_Z_STRIDE,
+    VIRGE_3D_STATE_CLIP_L_R,
+    VIRGE_3D_STATE_CLIP_T_B,
+    VIRGE_3D_STATE_TEX_BASE,
+    VIRGE_3D_STATE_COUNT
+};
+
+_Static_assert(VIRGE_2D_STATE_COUNT <= VIRGE_STATE_CACHE_REGS,
+               "2D state exceeds cache capacity");
+_Static_assert(VIRGE_3D_STATE_COUNT <= VIRGE_STATE_CACHE_REGS,
+               "3D state exceeds cache capacity");
+_Static_assert(VIRGE_3D_STATE_COUNT + 9 <= VIRGE_FIFO_DEPTH,
+               "largest dirty-state group exceeds S3d FIFO");
+
+#define VIRGE_3D_STATE_2D_CLOBBER_MASK \
+    ((1u << VIRGE_3D_STATE_Z_STRIDE) | (1u << VIRGE_3D_STATE_TEX_BASE))
+
+static void emit_cached_state(struct virge_ctx *ctx,
+                              struct virge_state_cache *cache,
+                              const uint32_t *offset,
+                              const uint32_t *desired,
+                              unsigned count, unsigned trailing_writes,
+                              uint64_t *considered, uint64_t *emitted)
 {
-    /* Seven writes.  The caller must reserve these FIFO entries together
-     * with the first writes of the primitive that follows, so no idle gap is
-     * introduced between state re-arm and triangle setup. */
-    /* Program the 3D engine's destination/Z/stride/clip state. MUST be
-     * re-called before every 3D primitive: on real DX silicon, executing 2D
-     * commands (clear_z, fill_rect) clobbers VIRGE_3D_Z_STRIDE back to its
-     * all-ones default 0xFF8. Set-once-at-init then leaves the Z fetch
-     * mis-strided (verified: writes land at stride 4088, not 1600; the
-     * triangle cuts off where the mis-strided fetch exits the cleared region).
-     * Z_BASE/DEST_BASE/DEST_SRC_STR/CLIP all stick on this silicon, but we
-     * re-arm them too -- idempotent, cheap, and covers TEX_BASE for the
-     * textured path. 86Box models these as separate 2D/3D files (set-once is
-     * fine there); real DX does not. */
-    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
-    uint32_t z_stride = ctx->width * 2;  /* Z is always 16-bit */
+    uint32_t dirty = virge_state_dirty_mask(cache, desired, count);
+    unsigned dirty_count = virge_state_dirty_count(dirty);
+    unsigned i;
 
-    /* DEST_BASE: framebuffer origin in VRAM */
-    virge_write32(ctx, VIRGE_3D_DEST_BASE, ctx->fb_base);
+    /* Reserve cache misses and the caller's immediately-following dynamic
+     * writes as one group.  Every caller is statically bounded to <=16. */
+    virge_wait_fifo(ctx, dirty_count + trailing_writes);
+    for (i = 0; i < count; i++) {
+        if (!(dirty & (1u << i)))
+            continue;
+        virge_write32(ctx, offset[i], desired[i]);
+        virge_state_commit(cache, i, desired[i]);
+    }
+    *considered += count;
+    *emitted += dirty_count;
+}
 
-    /* Z_BASE: Z-buffer origin (after framebuffer), quadword aligned */
-    uint32_t z_base = ctx->z_base;
-    z_base &= ~0x7;  /* force quadword alignment */
-    virge_write32(ctx, VIRGE_3D_Z_BASE, z_base);
+static void program_2d_state(struct virge_ctx *ctx, uint32_t dest_base,
+                             uint32_t dest_stride,
+                             unsigned trailing_writes)
+{
+    static const uint32_t offset[VIRGE_2D_STATE_COUNT] = {
+        VIRGE_2D_DEST_BASE,
+        VIRGE_2D_DEST_SRC_STR,
+        VIRGE_2D_CLIP_L_R,
+        VIRGE_2D_CLIP_T_B,
+    };
+    uint32_t desired[VIRGE_2D_STATE_COUNT] = {
+        dest_base,
+        ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF),
+        (uint32_t)(ctx->width - 1) & 0x7FF,
+        (uint32_t)(ctx->height - 1) & 0x7FF,
+    };
 
-    /* DEST_SRC_STR: destination stride [27:16] = framebuffer pitch; source
-     * stride [11:0] = the bound TEXTURE's row pitch (tex_stride). The source
-     * field is "byte offset of vertically adjacent pixels for a flat texture
-     * map" (datasheet 3d_regs.txt:292-294) -- it is the texture pitch, NOT the
-     * screen stride. Writing the screen stride here made every texel resolve
-     * to TEX_BDR_CLR (texprobe v6-v9). */
-    virge_write32(ctx, VIRGE_3D_DEST_SRC_STR,
-                  ((dest_stride & 0xFFF) << 16) | (ctx->tex_stride & 0xFFF));
+    emit_cached_state(ctx, &ctx->state_2d, offset, desired,
+                      VIRGE_2D_STATE_COUNT, trailing_writes,
+                      &ctx->state_2d_considered,
+                      &ctx->state_2d_emitted);
+}
 
-    /* Z_STRIDE */
-    virge_write32(ctx, VIRGE_3D_Z_STRIDE, z_stride & 0xFFF);
+static void program_3d_state(struct virge_ctx *ctx,
+                             unsigned trailing_writes)
+{
+    static const uint32_t offset[VIRGE_3D_STATE_COUNT] = {
+        VIRGE_3D_DEST_BASE,
+        VIRGE_3D_Z_BASE,
+        VIRGE_3D_DEST_SRC_STR,
+        VIRGE_3D_Z_STRIDE,
+        VIRGE_3D_CLIP_L_R,
+        VIRGE_3D_CLIP_T_B,
+        VIRGE_3D_TEX_BASE,
+    };
+    uint32_t desired[VIRGE_3D_STATE_COUNT] = {
+        ctx->fb_base,
+        ctx->z_base & ~0x7u,
+        ((ctx->stride & 0xFFF) << 16) | (ctx->tex_stride & 0xFFF),
+        ((uint32_t)ctx->width * 2u) & 0xFFF,
+        (uint32_t)(ctx->width - 1) & 0x7FF,
+        (uint32_t)(ctx->height - 1) & 0x7FF,
+        ctx->tex_base,
+    };
 
-    /* Clip to full screen. Left/top = 0 in the upper field, right/bottom
-     * = dimension-1 in the lower field -- these were previously swapped,
-     * producing a degenerate (left > right) clip rectangle that
-     * silently rejected every pixel regardless of any other setting. */
-    virge_write32(ctx, VIRGE_3D_CLIP_L_R,
-                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
-    virge_write32(ctx, VIRGE_3D_CLIP_T_B,
-                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
+    emit_cached_state(ctx, &ctx->state_3d, offset, desired,
+                      VIRGE_3D_STATE_COUNT, trailing_writes,
+                      &ctx->state_3d_considered,
+                      &ctx->state_3d_emitted);
+}
 
-    /* RE-ARM TEX_BASE: like Z_STRIDE, 2D commands (the clear/fill that runs
-     * between bind_texture and the next triangle) clobber it on real DX
-     * silicon -- without this, the textured triangle reads off-texture
-     * garbage (texprobe v3: a solid-red texture still rendered 0x3436, the
-     * engine's clobbered/default-base texel). bind_texture caches the value
-     * in ctx->tex_base; harmless for the Gouraud path (no texture sampled). */
-    virge_write32(ctx, VIRGE_3D_TEX_BASE, ctx->tex_base);
+static void invalidate_3d_after_2d(struct virge_ctx *ctx)
+{
+    virge_state_invalidate(&ctx->state_3d,
+                           VIRGE_3D_STATE_2D_CLOBBER_MASK);
 }
 
 /* ========================================================================
@@ -1167,21 +1224,10 @@ static void program_3d_state(struct virge_ctx *ctx)
 void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
                      uint32_t color)
 {
-    /* Ten register writes through the S3d FIFO, command kick last. */
-    virge_wait_fifo(ctx, 10);
-
     uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
 
-    /* Set destination base and stride for the 2D bank */
-    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
-    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
-                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
-    /* Left/top = 0, right/bottom = dimension-1 (see program_3d_state for
-     * why this ordering, not the reverse, matters). */
-    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
-    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
+    /* Six dynamic writes follow the cached target state, command kick last. */
+    program_2d_state(ctx, ctx->fb_base, dest_stride, 6);
 
     /* Foreground color = fill color */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
@@ -1222,6 +1268,7 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
     /* bit 31 = 0 for 2D */
 
     virge_write32(ctx, VIRGE_2D_CMD_SET, cmd);
+    invalidate_3d_after_2d(ctx);
 }
 
 /* ========================================================================
@@ -1233,30 +1280,20 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
 
 void virge_clear_z(struct virge_ctx *ctx, float z)
 {
-    /* Ten writes through the 2D bank, command kick last. */
-    virge_wait_fifo(ctx, 10);
-
     /* The Z value as a 16-bit fixed-point word.
      * ViRGE Z is S16.15. For the MUX scheme bit 15 has special meaning,
      * but for normal Z-buffering we just write the value directly. */
     uint16_t z_val = (uint16_t)(z * 65535.0f);
     uint32_t z_color = (z_val) | (z_val << 16);  /* pack for stride fill */
 
-    uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
     uint32_t z_stride = ctx->width * 2;  /* 16-bit Z */
 
-    /* Reprogram 2D registers to point at Z buffer instead of framebuffer.
+    /* Reprogram dirty 2D registers to point at Z instead of framebuffer.
      * Stride is a byte offset (DB019-B PDF p.246); the Z row is width*2
      * bytes since Z is 16-bit/pixel. Width/clip are in *pixels* (PDF p.235,
      * p.232) because the fill runs at ctx->dest_format (16bpp) — one pixel
      * per 16-bit Z word, see the width field below. */
-    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->z_base & ~0x7);
-    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
-                  ((z_stride & 0xFFF) << 16) | (z_stride & 0xFFF));
-    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
-    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
+    program_2d_state(ctx, ctx->z_base & ~0x7u, z_stride, 6);
 
     /* Fill color = the Z value repeated */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, z_color);
@@ -1293,14 +1330,11 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
                  | (VIRGE_ROP_PATCOPY << 17);
 
     virge_write32(ctx, VIRGE_2D_CMD_SET, cmd);
+    invalidate_3d_after_2d(ctx);
 
-    /* Restore 2D DEST_BASE to framebuffer for subsequent operations.  These
-     * writes remain ordered behind the Z-fill kick in the same S3d FIFO; no
-     * full-engine drain is required. */
-    virge_wait_fifo(ctx, 2);
-    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
-    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
-                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
+    /* Leave the exact Z target in state_2d.  A later framebuffer fill/line
+     * sees the base/stride mismatch and emits only those changed registers;
+     * restoring them eagerly cost two writes even when no 2D draw followed. */
 }
 
 /* ========================================================================
@@ -1516,11 +1550,10 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
     if (z_s < 0.0f) z_s = 0.0f;
     if (z_s > 1.0f) z_s = 1.0f;
 
-    /* Seven shared-state writes plus the nine color/Z setup writes below
-     * exactly fill one FIFO.  Reserve as a group so setup overlaps the
-     * previous primitive without ever overcommitting the 16 entries. */
-    virge_wait_fifo(ctx, 16);
-    program_3d_state(ctx);  /* re-arm: 2D ops clobber Z_STRIDE to 0xFF8 on real DX */
+    /* Reserve dirty shared state plus the nine color/Z writes below.  After
+     * a 2D clear, Z_STRIDE/TEX_BASE are forced dirty; subsequent triangles
+     * usually need no shared-state writes at all. */
+    program_3d_state(ctx, 9);
 
     /* X-direction attribute deltas are sign-flipped for lr=0 (R-to-L). The
      * engine seeds each attribute at TXS (edge 02) and iterates toward TXEND
@@ -1606,9 +1639,6 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
 void virge_draw_line(struct virge_ctx *ctx,
                       int x0, int y0, int x1, int y1, uint32_t color)
 {
-    /* Eleven register writes through the S3d FIFO, command kick last. */
-    virge_wait_fifo(ctx, 11);
-
     /*
      * The ViRGE 2D line engine always draws from bottom to top.
      * The starting point must be the endpoint with the largest Y.
@@ -1673,14 +1703,8 @@ void virge_draw_line(struct virge_ctx *ctx,
 
     uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
 
-    /* Set up 2D registers for line draw bank */
-    virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
-    virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
-                  ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
-    virge_write32(ctx, VIRGE_2D_CLIP_L_R,
-                  (0 << 16) | ((ctx->width - 1) & 0x7FF));
-    virge_write32(ctx, VIRGE_2D_CLIP_T_B,
-                  (0 << 16) | ((ctx->height - 1) & 0x7FF));
+    /* Seven dynamic line writes follow the cached 2D target state. */
+    program_2d_state(ctx, ctx->fb_base, dest_stride, 7);
 
     /* Foreground color */
     virge_write32(ctx, VIRGE_2D_PAT_FG_CLR, color);
@@ -1728,6 +1752,7 @@ void virge_draw_line(struct virge_ctx *ctx,
                  | (VIRGE_ROP_PATCOPY << 17);
 
     virge_write32(ctx, 0xA900, cmd);  /* L_CMD_SET — kicks the line */
+    invalidate_3d_after_2d(ctx);
 }
 
 /* ========================================================================
@@ -1960,10 +1985,8 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     int default_ufrac = ctx->tex_dbg_nopersp ? (27 - s_val) : 12;
     int ufrac = (ctx->tex_dbg_ufrac >= 0) ? ctx->tex_dbg_ufrac : default_ufrac;
 
-    /* Seven shared-state writes plus nine color/Z writes exactly fill the
-     * first FIFO group. */
-    virge_wait_fifo(ctx, 16);
-    program_3d_state(ctx);  /* re-arm: 2D ops clobber Z_STRIDE to 0xFF8 on real DX */
+    /* Dirty shared state plus nine color/Z writes form the first FIFO group. */
+    program_3d_state(ctx, 9);
 
     /* X-direction attribute deltas sign-flipped for lr=0 (R-to-L); see the
      * Gouraud path for the full rationale (engine iterates -X from the edge-
@@ -2406,12 +2429,12 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     ctx->gouraud_blend_bits = VIRGE_BLEND_NONE;
     ctx->textured_blend_bits = VIRGE_BLEND_NONE;
 
-    /* Initialize the 3D register bank (seven FIFO entries). */
-    virge_wait_fifo(ctx, 7);
-    program_3d_state(ctx);
+    /* Initialize the 3D cache/register bank (all seven begin dirty). */
+    program_3d_state(ctx, 0);
 
     printf("S3 ViRGE: S3d Engine initialized.\n");
     printf("S3 ViRGE: FIFO-aware submission enabled (16-slot S3d FIFO).\n");
+    printf("S3 ViRGE: dirty-state tracking enabled (2D target + 3D shared).\n");
     printf("  Screen: %dx%d, %d bpp (stride %u)\n",
            ctx->width, ctx->height, bpp * 8, ctx->stride);
     printf("  FB base: 0x%x (back buf 0x%x), Z base: 0x%x\n",
@@ -2423,6 +2446,15 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 void virge_cleanup(struct virge_ctx *ctx)
 {
     virge_wait_engine(ctx);
+
+    if (ctx->state_2d_considered || ctx->state_3d_considered) {
+        printf("S3 ViRGE: state cache emitted %llu/%llu 2D and %llu/%llu "
+               "3D shared-register writes\n",
+               (unsigned long long)ctx->state_2d_emitted,
+               (unsigned long long)ctx->state_2d_considered,
+               (unsigned long long)ctx->state_3d_emitted,
+               (unsigned long long)ctx->state_3d_considered);
+    }
 
     if (ctx->native_mode_owned && ctx->mmio) {
         printf("S3 ViRGE: restoring complete pre-P6 CRTC/PLL/clock state\n");
