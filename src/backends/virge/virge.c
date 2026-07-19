@@ -1004,6 +1004,26 @@ void virge_wait_engine(struct virge_ctx *ctx)
         ;
 }
 
+void virge_wait_fifo(struct virge_ctx *ctx, unsigned slots)
+{
+    /* Every S3d MMIO register write travels through this FIFO.  MM8504
+     * bits 12-8 expose its free-slot count and the FIFO is 16 entries deep
+     * (DB019-B sec.15.3 and sec.22, absolute PDF pp.108 and 300).  Waiting
+     * only for the space a bounded write group needs lets CPU setup overlap
+     * an earlier primitive's rasterization. */
+    if (slots == 0)
+        return;
+    if (slots > VIRGE_FIFO_DEPTH) {
+        fprintf(stderr,
+                "S3 ViRGE: internal error: requested %u FIFO slots (max %u)\n",
+                slots, VIRGE_FIFO_DEPTH);
+        abort();
+    }
+    while (virge_fifo_slots_free(
+               virge_read32(ctx, VIRGE_SUBSYS_STATUS)) < slots)
+        ;
+}
+
 void virge_wait_vsync(struct virge_ctx *ctx)
 {
     /* SUBSYS_STATUS bit 0 (VSY INT) is a LATCHED interrupt status, not
@@ -1083,6 +1103,9 @@ void virge_swap_buffers(struct virge_ctx *ctx)
 
 static void program_3d_state(struct virge_ctx *ctx)
 {
+    /* Seven writes.  The caller must reserve these FIFO entries together
+     * with the first writes of the primitive that follows, so no idle gap is
+     * introduced between state re-arm and triangle setup. */
     /* Program the 3D engine's destination/Z/stride/clip state. MUST be
      * re-called before every 3D primitive: on real DX silicon, executing 2D
      * commands (clear_z, fill_rect) clobbers VIRGE_3D_Z_STRIDE back to its
@@ -1144,7 +1167,8 @@ static void program_3d_state(struct virge_ctx *ctx)
 void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
                      uint32_t color)
 {
-    virge_wait_engine(ctx);
+    /* Ten register writes through the S3d FIFO, command kick last. */
+    virge_wait_fifo(ctx, 10);
 
     uint32_t dest_stride = ctx->stride;  /* real scanout pitch (P1) */
 
@@ -1209,7 +1233,8 @@ void virge_fill_rect(struct virge_ctx *ctx, int x, int y, int w, int h,
 
 void virge_clear_z(struct virge_ctx *ctx, float z)
 {
-    virge_wait_engine(ctx);
+    /* Ten writes through the 2D bank, command kick last. */
+    virge_wait_fifo(ctx, 10);
 
     /* The Z value as a 16-bit fixed-point word.
      * ViRGE Z is S16.15. For the MUX scheme bit 15 has special meaning,
@@ -1269,8 +1294,10 @@ void virge_clear_z(struct virge_ctx *ctx, float z)
 
     virge_write32(ctx, VIRGE_2D_CMD_SET, cmd);
 
-    /* Restore 2D DEST_BASE to framebuffer for subsequent operations */
-    virge_wait_engine(ctx);
+    /* Restore 2D DEST_BASE to framebuffer for subsequent operations.  These
+     * writes remain ordered behind the Z-fill kick in the same S3d FIFO; no
+     * full-engine drain is required. */
+    virge_wait_fifo(ctx, 2);
     virge_write32(ctx, VIRGE_2D_DEST_BASE, ctx->fb_base);
     virge_write32(ctx, VIRGE_2D_DEST_SRC_STR,
                   ((dest_stride & 0xFFF) << 16) | (dest_stride & 0xFFF));
@@ -1489,7 +1516,10 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
     if (z_s < 0.0f) z_s = 0.0f;
     if (z_s > 1.0f) z_s = 1.0f;
 
-    virge_wait_engine(ctx);
+    /* Seven shared-state writes plus the nine color/Z setup writes below
+     * exactly fill one FIFO.  Reserve as a group so setup overlaps the
+     * previous primitive without ever overcommitting the 16 entries. */
+    virge_wait_fifo(ctx, 16);
     program_3d_state(ctx);  /* re-arm: 2D ops clobber Z_STRIDE to 0xFF8 on real DX */
 
     /* X-direction attribute deltas are sign-flipped for lr=0 (R-to-L). The
@@ -1532,6 +1562,9 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
     virge_write32(ctx, VIRGE_3D_TdZdX, (uint32_t)VIRGE_Z_FIXED(sx * dzdx));
     virge_write32(ctx, VIRGE_3D_TdZdY, (uint32_t)VIRGE_Z_FIXED(ew_z));
 
+    /* Nine remaining writes: eight geometry registers and the command kick. */
+    virge_wait_fifo(ctx, 9);
+
     /* --- Program edge geometry --- */
     virge_write32(ctx, VIRGE_3D_TdXdY02, (uint32_t)dXdY02);
     virge_write32(ctx, VIRGE_3D_TdXdY01, (uint32_t)dXdY01);
@@ -1573,7 +1606,8 @@ void virge_draw_triangle_gouraud(struct virge_ctx *ctx,
 void virge_draw_line(struct virge_ctx *ctx,
                       int x0, int y0, int x1, int y1, uint32_t color)
 {
-    virge_wait_engine(ctx);
+    /* Eleven register writes through the S3d FIFO, command kick last. */
+    virge_wait_fifo(ctx, 11);
 
     /*
      * The ViRGE 2D line engine always draws from bottom to top.
@@ -1926,7 +1960,9 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     int default_ufrac = ctx->tex_dbg_nopersp ? (27 - s_val) : 12;
     int ufrac = (ctx->tex_dbg_ufrac >= 0) ? ctx->tex_dbg_ufrac : default_ufrac;
 
-    virge_wait_engine(ctx);
+    /* Seven shared-state writes plus nine color/Z writes exactly fill the
+     * first FIFO group. */
+    virge_wait_fifo(ctx, 16);
     program_3d_state(ctx);  /* re-arm: 2D ops clobber Z_STRIDE to 0xFF8 on real DX */
 
     /* X-direction attribute deltas sign-flipped for lr=0 (R-to-L); see the
@@ -1961,6 +1997,9 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     virge_write32(ctx, VIRGE_3D_TZS, (uint32_t)VIRGE_Z_FIXED(z_s));
     virge_write32(ctx, VIRGE_3D_TdZdX, (uint32_t)VIRGE_Z_FIXED(sx * dzdx));
     virge_write32(ctx, VIRGE_3D_TdZdY, (uint32_t)VIRGE_Z_FIXED(ew_z));
+
+    /* The next sixteen writes run from TBU through TdXdY01. */
+    virge_wait_fifo(ctx, 16);
 
     /* --- Texture coordinates (U, V, W with perspective) --- */
     /* Convert to hardware fixed-point */
@@ -2005,6 +2044,9 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     /* --- Edge geometry (same as Gouraud) --- */
     virge_write32(ctx, VIRGE_3D_TdXdY02, (uint32_t)dXdY02);
     virge_write32(ctx, VIRGE_3D_TdXdY01, (uint32_t)dXdY01);
+
+    /* Seven final writes: remaining slope, five edge/count values, command. */
+    virge_wait_fifo(ctx, 7);
     virge_write32(ctx, VIRGE_3D_TdXdY12, (uint32_t)dXdY12);
     /* TXEND01 = edge 01 X at the bottom scanline; TXEND12 = edge 12 X at
      * the middle scanline -- prestepped. See gouraud path for derivation. */
@@ -2364,10 +2406,12 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     ctx->gouraud_blend_bits = VIRGE_BLEND_NONE;
     ctx->textured_blend_bits = VIRGE_BLEND_NONE;
 
-    /* Initialize the 3D register bank */
+    /* Initialize the 3D register bank (seven FIFO entries). */
+    virge_wait_fifo(ctx, 7);
     program_3d_state(ctx);
 
     printf("S3 ViRGE: S3d Engine initialized.\n");
+    printf("S3 ViRGE: FIFO-aware submission enabled (16-slot S3d FIFO).\n");
     printf("  Screen: %dx%d, %d bpp (stride %u)\n",
            ctx->width, ctx->height, bpp * 8, ctx->stride);
     printf("  FB base: 0x%x (back buf 0x%x), Z base: 0x%x\n",

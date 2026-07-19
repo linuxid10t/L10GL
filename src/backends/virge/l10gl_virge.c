@@ -493,7 +493,7 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
     /* Program TEX_BASE (quadword aligned) and cache it so the per-primitive
      * re-arm in program_3d_state can restore it after a 2D clear clobbers it
      * (the Z_STRIDE lesson, commit f0811f1). */
-    virge_wait_engine(hw);
+    virge_wait_fifo(hw, 1);
     hw->tex_base = tex_addr & ~0x7;
     virge_write32(hw, VIRGE_3D_TEX_BASE, hw->tex_base);
 

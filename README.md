@@ -298,6 +298,12 @@ Retain the `L10GL FPS:` interval lines and the `L10GL FPS final:` line from
 each run. Vsync may cap lightweight workloads near the monitor refresh rate;
 the heavier gears workload helps expose submission overhead.
 
+The pre-optimization ViRGE/DX baseline at 800x600 RGB555 over 600 frames is
+57.37 FPS for `cube`, 30.01 FPS for `textured_cube`, and 30.13 FPS for
+`gears`. Phase 6 FIFO-aware submission uses the documented MM8504 S3d
+free-slot count to queue bounded register groups while the rasterizer is busy;
+full engine drains remain at CPU VRAM and page-flip boundaries.
+
 An unknown override is rejected and prints the available backend names. If no
 supported card is present, automatic selection uses offscreen swrast without
 attempting MMIO access; it prints a reminder when no dump path was configured.

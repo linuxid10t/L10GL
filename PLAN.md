@@ -1211,25 +1211,34 @@ card (human validation, later).
 
 ## Phase 6 — Performance (only after everything above is stable)
 
-**B0 FPS instrumentation implemented 2026-07-18; hardware baseline
-pending.** `src/l10gl_fps.c` provides a shared `CLOCK_MONOTONIC` counter with
+**B0 FPS instrumentation and hardware baseline completed 2026-07-18.**
+`src/l10gl_fps.c` provides a shared `CLOCK_MONOTONIC` counter with
 pure timestamp-injection tests. `cube`, `textured_cube`, and `gears` count a
 frame only after engine completion and buffer swap, print parser-friendly
 two-second interval plus cumulative FPS, and print a final whole-run average.
 This deliberately includes vsync/presentation in the user-visible rate.
-Use `L10GL_FRAMES=600` at 800x600 on the ViRGE for stable baseline numbers
-before changing submission behavior. `test-fps` pins interval rollover and
-whole-run math. Do not begin item 1 until those three baseline averages are
-recorded.
+The 800x600 RGB555, 600-frame ViRGE/DX baseline is: `cube` 57.37 FPS,
+`textured_cube` 30.01 FPS, and `gears` 30.13 FPS. `test-fps` pins interval
+rollover and whole-run math.
+
+**Item 1 FIFO-aware submission implemented 2026-07-18; real-hardware
+validation pending.** MM8504 bits 12-8 are decoded as the documented free
+count for the 16-entry S3d FIFO. Fill, Z clear, line, Gouraud, and textured
+submission are split into explicitly counted groups no larger than 16, with
+the command kick last in each primitive. Full-idle waits remain before CPU
+linear-VRAM access, page flips, and teardown. The three B0 workloads must be
+rerun on the ViRGE/DX and compared against the baseline above before item 1
+is considered verified.
 
 Ordered by expected win/effort on the ViRGE:
 
-1. **FIFO-aware submission.** Every draw currently spins for full engine
+1. **FIFO-aware submission.** Previously every draw spun for full engine
    idle (`virge_wait_engine`) before touching registers. Verified
    (DB019-B PDF p. 300): MM8504 read bits 12-8 report S3d FIFO slots
    free, and the FIFO is 16 slots deep. Wait for enough free slots
    instead of idle so triangle setup overlaps rasterization. Keep
    full-idle waits before CPU framebuffer access and buffer flips.
+   Implemented; hardware performance/correctness confirmation pending.
 2. **Dirty-state tracking.** Skip re-writing CLIP/STRIDE/DEST_BASE per
    draw (`virge_fill_rect` reprograms them every call); cache last-written
    values in `virge_ctx`, invalidate on Z-clear's base swap.

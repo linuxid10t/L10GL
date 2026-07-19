@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "backends/virge/virge.h"
 #include "backends/virge/virge_mode.h"
 
 static int failed;
@@ -364,6 +365,20 @@ static void test_first_gate_image(void)
            "first gate retains programmable DCLK load sequence");
 }
 
+static void test_fifo_status_decode(void)
+{
+    EXPECT(VIRGE_FIFO_DEPTH == 16u, "documented S3d FIFO depth");
+    EXPECT(virge_fifo_slots_free(0) == 0u,
+           "decode empty S3d FIFO capacity");
+    EXPECT(virge_fifo_slots_free(1u << 8) == 1u,
+           "decode one free S3d FIFO slot");
+    EXPECT(virge_fifo_slots_free(16u << 8) == 16u,
+           "decode all free S3d FIFO slots");
+    EXPECT(virge_fifo_slots_free(VIRGE_STATUS_3DIDLE |
+                                 VIRGE_STATUS_VSYNC | (9u << 8)) == 9u,
+           "FIFO decode ignores adjacent status bits");
+}
+
 int main(void)
 {
     test_fixed_modes();
@@ -371,8 +386,9 @@ int main(void)
     test_pll();
     test_crtc_image();
     test_first_gate_image();
+    test_fifo_status_decode();
     if (failed)
         return 1;
-    printf("test-virge-mode: PASS (fixed modes, DCLK PLL, CRTC/save image)\n");
+    printf("test-virge-mode: PASS (fixed modes, DCLK PLL, CRTC/save image, FIFO status)\n");
     return 0;
 }

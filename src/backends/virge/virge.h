@@ -90,6 +90,18 @@
  * Inverted from what the name might suggest -- do not read this as
  * "busy when set". */
 #define VIRGE_STATUS_3DIDLE     (1 << 13)
+/* MM8504 bits 12-8 report free entries in the 16-deep S3d register-write
+ * FIFO (DB019-B sec.22, absolute PDF p.300).  This is independent of bit 13:
+ * the FIFO can accept setup writes while the rasterizer remains busy. */
+#define VIRGE_STATUS_FIFO_FREE_MASK  (0x1Fu << 8)
+#define VIRGE_STATUS_FIFO_FREE_SHIFT 8
+#define VIRGE_FIFO_DEPTH             16u
+
+static inline unsigned virge_fifo_slots_free(uint32_t status)
+{
+    return (status & VIRGE_STATUS_FIFO_FREE_MASK) >>
+           VIRGE_STATUS_FIFO_FREE_SHIFT;
+}
 /* Bit 0 is VSY INT — a LATCHED vertical-sync interrupt status, NOT a
  * live "in retrace" level (DB019-B §22, PDF p.299). Once vsync occurs
  * it reads 1 forever until software writes VSY CLR (Subsystem Control
@@ -730,6 +742,11 @@ void virge_cleanup(struct virge_ctx *ctx);
  * is not busy.
  */
 void virge_wait_engine(struct virge_ctx *ctx);
+
+/* Wait until at least @slots entries are free in the S3d FIFO.  Drawing
+ * paths use this instead of waiting for full engine idle, allowing setup for
+ * the next primitive to overlap rasterization of the previous one. */
+void virge_wait_fifo(struct virge_ctx *ctx, unsigned slots);
 
 /*
  * virge_wait_vsync - Block until vertical retrace.
