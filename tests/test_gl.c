@@ -961,7 +961,7 @@ static void test_texture_subimage(struct l10gl_ctx *ctx)
     /* Error cases. GL_TEXTURE_1D (0x0DE0) is not in the shim's enum set. */
     glTexSubImage2D((GLenum)0x0DE0, 0, 0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, red);
     expect_int("subimage bad target", glGetError(), GL_INVALID_ENUM);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_LUMINANCE,
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, (GLenum)0x1234,
                     GL_UNSIGNED_BYTE, red);
     expect_int("subimage bad format", glGetError(), GL_INVALID_ENUM);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGB, GL_FLOAT, red);
@@ -975,6 +975,271 @@ static void test_texture_subimage(struct l10gl_ctx *ctx)
     /* With the bound texture deleted there is no retained level to update. */
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, red);
     expect_int("subimage without texture", glGetError(), GL_INVALID_OPERATION);
+}
+
+/* Q7: GL_LUMINANCE/GL_ALPHA/GL_INTENSITY are accepted by glTexImage2D and
+ * glTexSubImage2D (as both format and internal_format), one source byte
+ * expanded to ARGB8888 per the GL rules the backends store: LUMINANCE ->
+ * (L,L,L,255), ALPHA -> (0,0,0,A), INTENSITY -> (I,I,I,I). GLQuake's default
+ * luminance lightmaps (-lm_1) and the -lm_4 RGBA lightmaps both flow through
+ * here; the conversion is driven by the source format, so a luminance source
+ * expands the same way under any accepted internal format. */
+static void test_lightmap_formats(struct l10gl_ctx *ctx)
+{
+    GLuint tex;
+
+    (void)ctx;
+    memset(&capture, 0, sizeof(capture));
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    /* GL_LUMINANCE: byte 0x80 -> (128,128,128,255) = 0xff808080. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 1, 0,
+                 GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                 (const GLubyte[]){ 0x80, 0x40 });
+    expect_int("luminance upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("luminance upload counted", capture.texture_uploads, 1);
+    expect_int("luminance texel0", (int)capture.texture_pixels[0],
+               (int)0xff808080u);
+    expect_int("luminance texel1", (int)capture.texture_pixels[1],
+               (int)0xff404040u);
+
+    /* GL_ALPHA: byte 0xAA -> (0,0,0,170) = 0xaa000000. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 1, 1, 0,
+                 GL_ALPHA, GL_UNSIGNED_BYTE, (const GLubyte[]){ 0xaa });
+    expect_int("alpha upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("alpha texel", (int)capture.texture_pixels[0],
+               (int)0xaa000000u);
+
+    /* GL_INTENSITY: byte 0x55 -> (85,85,85,85) = 0x55555555. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_INTENSITY, 1, 1, 0,
+                 GL_INTENSITY, GL_UNSIGNED_BYTE, (const GLubyte[]){ 0x55 });
+    expect_int("intensity upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("intensity texel", (int)capture.texture_pixels[0],
+               (int)0x55555555u);
+
+    /* Source format drives expansion regardless of internal format: luminance
+     * data under a GL_RGBA internal format still expands by the source. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                 GL_LUMINANCE, GL_UNSIGNED_BYTE, (const GLubyte[]){ 0xc0 });
+    expect_int("luminance under rgba internal ok", glGetError(), GL_NO_ERROR);
+    expect_int("luminance-under-rgba texel",
+               (int)capture.texture_pixels[0], (int)0xffc0c0c0u);
+
+    /* glTexSubImage2D accepts the one-byte formats too (Q4 dynamic lightmap
+     * updates on a luminance lightmap). */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 1, 0,
+                 GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                 (const GLubyte[]){ 0x10, 0x10 });
+    {
+        int uploads = capture.texture_uploads;
+
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 1, 0, 1, 1, GL_LUMINANCE,
+                        GL_UNSIGNED_BYTE, (const GLubyte[]){ 0xe0 });
+        expect_int("luminance subimage ok", glGetError(), GL_NO_ERROR);
+        expect_int("luminance subimage re-uploads",
+                   capture.texture_uploads, uploads + 1);
+        expect_int("luminance subimage updated texel",
+                   (int)capture.texture_pixels[1], (int)0xffe0e0e0u);
+        expect_int("luminance subimage untouched texel",
+                   (int)capture.texture_pixels[0], (int)0xff101010u);
+    }
+
+    /* Error cases. The Q7 formats are now valid, so the negative format test
+     * uses a bogus enum; a bogus internal_format is still rejected. */
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 1, 1, 0,
+                 (GLenum)0x1234, GL_UNSIGNED_BYTE, (const GLubyte[]){ 0x80 });
+    expect_int("teximage bad format rejected", glGetError(), GL_INVALID_ENUM);
+    glTexImage2D(GL_TEXTURE_2D, 0, (GLenum)0x1234, 1, 1, 0,
+                 GL_LUMINANCE, GL_UNSIGNED_BYTE, (const GLubyte[]){ 0x80 });
+    expect_int("teximage bad internal rejected", glGetError(),
+               GL_INVALID_VALUE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 1, 1, 0,
+                 GL_LUMINANCE, GL_FLOAT, (const GLubyte[]){ 0x80 });
+    expect_int("teximage bad type rejected", glGetError(), GL_INVALID_ENUM);
+
+    glDeleteTextures(1, &tex);
+}
+
+/* Q7 two-pass lightmap render helper. Pass 1 paints `base_tex` (GL_REPLACE,
+ * blend off); pass 2 paints `lm_tex` (GL_REPLACE) over it with a multiply
+ * blend. The textures are uploaded by the caller; this only draws. */
+static void draw_lightmap_two_pass(GLuint base_tex, GLuint lm_tex,
+                                   GLenum sfactor, GLenum dfactor)
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindTexture(GL_TEXTURE_2D, base_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glColor3f(1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(-1, -1);
+    glTexCoord2f(1, 0); glVertex2f( 1, -1);
+    glTexCoord2f(1, 1); glVertex2f( 1,  1);
+    glTexCoord2f(0, 1); glVertex2f(-1,  1);
+    glEnd();
+
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glBlendFunc(sfactor, dfactor);
+    glEnable(GL_BLEND);
+    glColor3f(1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(-1, -1);
+    glTexCoord2f(1, 0); glVertex2f( 1, -1);
+    glTexCoord2f(1, 1); glVertex2f( 1,  1);
+    glTexCoord2f(0, 1); glVertex2f(-1,  1);
+    glEnd();
+}
+
+/* Q7: end-to-end lightmap multiply on swrast. A 4x4 framebuffer is painted in
+ * two passes over a full-screen quad; each 2x2 NEAREST texel covers a 2x2 fb
+ * block, so fb(px,py) reflects base[col=px/2,row=(3-py)/2] combined with the
+ * lightmap texel at the same block. Three cases are pinned against analytic
+ * values:
+ *   RGBA lightmap,    GL_ZERO/GL_SRC_COLOR           -> fb = base*lm/255
+ *   luminance lightmap, GL_ZERO/GL_ONE_MINUS_SRC_COLOR -> fb = base*(1-lm/255)
+ *   glTexSubImage2D the luminance lightmap to 0, re-render -> fb = base
+ * The last demonstrates Q4 dynamic lightmap updates visibly modulating the lit
+ * world, exercising the GL_LUMINANCE format through upload, sample, blend, and
+ * subimage update on the real swrast rasterizer. */
+static void test_lightmap_multiply(void)
+{
+    /* base checker (RGBA): white,gray / gray,white. */
+    static const GLubyte base[16] = {
+        255, 255, 255, 255,  128, 128, 128, 255,
+        128, 128, 128, 255,  255, 255, 255, 255,
+    };
+    /* lightmap gradient (dark,bright / dark,bright) as RGBA and luminance.
+     * The luminance source is 1 byte/texel, so a 2-wide row is 2 bytes and the
+     * default GL_UNPACK_ALIGNMENT=4 strides each row to 4 bytes; the array is
+     * padded accordingly (two data bytes + two pad bytes per row). */
+    static const GLubyte lm_rgba[16] = {
+         64,  64,  64, 255,  192, 192, 192, 255,
+         64,  64,  64, 255,  192, 192, 192, 255,
+    };
+    static const GLubyte lm_lum[8] = { 64, 192, 0, 0,  64, 192, 0, 0 };
+    static const GLubyte lm_zero[8] = { 0, 0, 0, 0,  0, 0, 0, 0 };
+    char directory[] = "/tmp/l10gl-lm-test.XXXXXX";
+    char template[PATH_MAX], path[PATH_MAX];
+    struct l10gl_ctx ctx;
+    GLuint base_tex, lm_tex;
+    unsigned char frame[4 * 4 * 3];
+
+    if (!mkdtemp(directory)) {
+        fprintf(stderr, "test-gl: cannot create lightmap temp directory\n");
+        failures++;
+        return;
+    }
+    snprintf(template, sizeof(template), "%s/lm%%04d.ppm", directory);
+    setenv("L10GL_SWRAST_DUMP", template, 1);
+    if (l10gl_create(&ctx, &swrast_backend, 4, 4, 3) != 0) {
+        fprintf(stderr, "test-gl: cannot create lightmap context\n");
+        failures++;
+        rmdir(directory);
+        unsetenv("L10GL_SWRAST_DUMP");
+        return;
+    }
+    l10glMakeCurrent(&ctx);
+    glViewport(0, 0, 4, 4);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glClearColor(0, 0, 0, 1);
+    glGenTextures(1, &base_tex);
+    glGenTextures(1, &lm_tex);
+
+    /* Scenario A: RGBA lightmap, fb = base*lm/255. */
+    glBindTexture(GL_TEXTURE_2D, base_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, base);
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, lm_rgba);
+    draw_lightmap_two_pass(base_tex, lm_tex, GL_ZERO, GL_SRC_COLOR);
+    l10glSwapBuffers();
+    expect_int("lightmap rgba render no error", glGetError(), GL_NO_ERROR);
+
+    /* Scenario B: luminance lightmap, fb = base*(1-lm/255). */
+    glBindTexture(GL_TEXTURE_2D, base_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, base);
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 2, 2, 0,
+                 GL_LUMINANCE, GL_UNSIGNED_BYTE, lm_lum);
+    draw_lightmap_two_pass(base_tex, lm_tex, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+    l10glSwapBuffers();
+    expect_int("lightmap luminance render no error", glGetError(), GL_NO_ERROR);
+
+    /* Scenario C: glTexSubImage2D the luminance lightmap to 0, re-render.
+     * With dfactor = 1-src and src = 0, fb = base. base_tex still holds the
+     * base from scenario B; only the lightmap is updated. */
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 2, 2, GL_LUMINANCE,
+                    GL_UNSIGNED_BYTE, lm_zero);
+    draw_lightmap_two_pass(base_tex, lm_tex, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+    l10glSwapBuffers();
+    expect_int("lightmap subimage render no error", glGetError(), GL_NO_ERROR);
+
+    l10glMakeCurrent(NULL);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+
+    /* fb(px,py) block centers: block(0,0)@(0,3), block(1,0)@(2,2),
+     * block(0,1)@(1,0), block(1,1)@(3,1). Scenario A = base*lm/255. */
+    snprintf(path, sizeof(path), "%s/lm0000.ppm", directory);
+    if (read_ppm_4x4(path, frame) != 0) {
+        fprintf(stderr, "test-gl: cannot read lightmap rgba frame\n");
+        failures++;
+    } else {
+        expect_rgb("lightmap rgba block00", &frame[(3 * 4 + 0) * 3], 64, 64, 64);
+        expect_rgb("lightmap rgba block10", &frame[(2 * 4 + 2) * 3], 96, 96, 96);
+        expect_rgb("lightmap rgba block01", &frame[(0 * 4 + 1) * 3], 32, 32, 32);
+        expect_rgb("lightmap rgba block11", &frame[(1 * 4 + 3) * 3],
+                   192, 192, 192);
+    }
+    /* Scenario B = base*(1-lm/255). */
+    snprintf(path, sizeof(path), "%s/lm0001.ppm", directory);
+    if (read_ppm_4x4(path, frame) != 0) {
+        fprintf(stderr, "test-gl: cannot read lightmap luminance frame\n");
+        failures++;
+    } else {
+        expect_rgb("lightmap lum block00", &frame[(3 * 4 + 0) * 3],
+                   191, 191, 191);
+        expect_rgb("lightmap lum block10", &frame[(2 * 4 + 2) * 3], 32, 32, 32);
+        expect_rgb("lightmap lum block01", &frame[(0 * 4 + 1) * 3], 96, 96, 96);
+        expect_rgb("lightmap lum block11", &frame[(1 * 4 + 3) * 3], 63, 63, 63);
+    }
+    /* Scenario C: lightmap zeroed -> fb = base. */
+    snprintf(path, sizeof(path), "%s/lm0002.ppm", directory);
+    if (read_ppm_4x4(path, frame) != 0) {
+        fprintf(stderr, "test-gl: cannot read lightmap subimage frame\n");
+        failures++;
+    } else {
+        expect_rgb("lightmap sub block00", &frame[(3 * 4 + 0) * 3],
+                   255, 255, 255);
+        expect_rgb("lightmap sub block10", &frame[(2 * 4 + 2) * 3],
+                   128, 128, 128);
+        expect_rgb("lightmap sub block01", &frame[(0 * 4 + 1) * 3],
+                   128, 128, 128);
+        expect_rgb("lightmap sub block11", &frame[(1 * 4 + 3) * 3],
+                   255, 255, 255);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        snprintf(path, sizeof(path), "%s/lm%04d.ppm", directory, i);
+        unlink(path);
+    }
+    rmdir(directory);
 }
 
 int main(void)
@@ -996,6 +1261,7 @@ int main(void)
     test_shade_model(&ctx);
     test_texture_objects(&ctx);
     test_texture_subimage(&ctx);
+    test_lightmap_formats(&ctx);
     test_quake_entry_points(&ctx);
     test_clear_and_sync(&ctx);
     test_stack_errors();
@@ -1004,6 +1270,7 @@ int main(void)
     l10gl_destroy(&ctx);
     test_swrast_texture_pixels();
     test_swrast_subimage_equivalence();
+    test_lightmap_multiply();
 
     if (failures) {
         fprintf(stderr, "test-gl: %d failure(s)\n", failures);

@@ -1000,21 +1000,61 @@ static int gl_is_power_of_two(GLsizei value)
     return value > 0 && (value & (value - 1)) == 0;
 }
 
-/* Pack one source texel (GL_RGB or GL_RGBA, GL_UNSIGNED_BYTE) into the
- * ARGB8888 word the backends store. A NULL texel yields the same defaults
- * glTexImage2D uses for an unpack source of NULL (zero RGB; alpha 255 for
- * GL_RGB, 0 for GL_RGBA). Shared by glTexImage2D and glTexSubImage2D. */
+/* Source bytes per texel for an UNSIGNED_BYTE pixel format accepted by
+ * glTexImage2D/glTexSubImage2D. GL_LUMINANCE/GL_ALPHA/GL_INTENSITY are the Q7
+ * lightmap formats: one source byte expanded to ARGB8888 in gl_pack_texel_argb
+ * (the backends always receive ARGB8888). Returns 0 for a format the shim does
+ * not accept, which the callers use to raise GL_INVALID_ENUM. */
+static size_t gl_format_components(GLenum format)
+{
+    switch (format) {
+    case GL_RGBA:       return 4;
+    case GL_RGB:        return 3;
+    case GL_LUMINANCE:
+    case GL_ALPHA:
+    case GL_INTENSITY:  return 1;
+    default:            return 0;
+    }
+}
+
+/* Pack one source texel (GL_UNSIGNED_BYTE) into the ARGB8888 word the backends
+ * store. The Q7 one-byte formats expand as the GL texture environment rules
+ * dictate: LUMINANCE -> (L,L,L,255), ALPHA -> (0,0,0,A), INTENSITY -> (I,I,I,I).
+ * A NULL texel yields the GL defaults for an unpack source of NULL (zero RGB;
+ * alpha 255 for formats with no alpha channel — RGB and LUMINANCE — and 0
+ * otherwise). Shared by glTexImage2D and glTexSubImage2D. */
 static uint32_t gl_pack_texel_argb(const uint8_t *texel, GLenum format)
 {
-    uint8_t red = 0, green = 0, blue = 0;
-    uint8_t alpha = format == GL_RGB ? 255 : 0;
+    uint8_t red = 0, green = 0, blue = 0, alpha = 0;
+    uint8_t v;
 
-    if (texel) {
-        red = texel[0];
-        green = texel[1];
-        blue = texel[2];
-        if (format == GL_RGBA)
-            alpha = texel[3];
+    /* Formats with no alpha channel default A to 1.0 for both real and NULL
+     * unpack sources; the others leave A at 0 unless a texel sets it. */
+    if (format == GL_RGB || format == GL_LUMINANCE)
+        alpha = 255;
+    if (!texel)
+        return ((uint32_t)alpha << 24) | ((uint32_t)red << 16) |
+               ((uint32_t)green << 8) | blue;
+    switch (format) {
+    case GL_RGB:
+        red = texel[0]; green = texel[1]; blue = texel[2];
+        break;
+    case GL_RGBA:
+        red = texel[0]; green = texel[1]; blue = texel[2]; alpha = texel[3];
+        break;
+    case GL_LUMINANCE:
+        v = texel[0];
+        red = green = blue = v;
+        break;
+    case GL_ALPHA:
+        alpha = texel[0];
+        break;
+    case GL_INTENSITY:
+        v = texel[0];
+        red = green = blue = alpha = v;
+        break;
+    default:
+        break;
     }
     return ((uint32_t)alpha << 24) | ((uint32_t)red << 16) |
            ((uint32_t)green << 8) | blue;
@@ -1033,9 +1073,8 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
 
     if (!ctx)
         return;
-    if (target != GL_TEXTURE_2D ||
-        (format != GL_RGB && format != GL_RGBA) ||
-        type != GL_UNSIGNED_BYTE) {
+    if (target != GL_TEXTURE_2D || type != GL_UNSIGNED_BYTE ||
+        gl_format_components(format) == 0) {
         gl_record_error(GL_INVALID_ENUM);
         return;
     }
@@ -1048,7 +1087,10 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
     if (level != 0 || border != 0 ||
         (internal_format != 3 && internal_format != 4 &&
          internal_format != (GLint)GL_RGB &&
-         internal_format != (GLint)GL_RGBA) ||
+         internal_format != (GLint)GL_RGBA &&
+         internal_format != (GLint)GL_LUMINANCE &&
+         internal_format != (GLint)GL_ALPHA &&
+         internal_format != (GLint)GL_INTENSITY) ||
         width < 1 || height < 1 ||
         width > 512 || height > 512 ||
         !gl_is_power_of_two(width) || !gl_is_power_of_two(height)) {
@@ -1065,7 +1107,7 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
         return;
     }
 
-    components = format == GL_RGBA ? 4u : 3u;
+    components = gl_format_components(format);
     if ((size_t)width > SIZE_MAX / components) {
         gl_record_error(GL_OUT_OF_MEMORY);
         return;
@@ -1313,9 +1355,8 @@ void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
 
     if (!ctx)
         return;
-    if (target != GL_TEXTURE_2D ||
-        (format != GL_RGB && format != GL_RGBA) ||
-        type != GL_UNSIGNED_BYTE) {
+    if (target != GL_TEXTURE_2D || type != GL_UNSIGNED_BYTE ||
+        gl_format_components(format) == 0) {
         gl_record_error(GL_INVALID_ENUM);
         return;
     }
@@ -1338,7 +1379,7 @@ void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
     if (width == 0 || height == 0)
         return;
 
-    components = format == GL_RGBA ? 4u : 3u;
+    components = gl_format_components(format);
     if ((size_t)width > SIZE_MAX / components) {
         gl_record_error(GL_OUT_OF_MEMORY);
         return;

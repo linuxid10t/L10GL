@@ -345,6 +345,23 @@ lightmap) matches an analytically computed image on swrast for both the
 RGBA and luminance formats; dynamic light updates through Q4 visibly
 modulate the result.
 
+*Status (Q7, swrast gate):* DONE — `glTexImage2D`/`glTexSubImage2D` accept
+`GL_LUMINANCE`/`GL_ALPHA`/`GL_INTENSITY` (Q0 lists all three as
+GLQuake-referenced tokens) as both format and internal format; the one
+source byte is expanded to ARGB8888 in the shim before the backend sees it
+(LUMINANCE → `(L,L,L,255)`, ALPHA → `(0,0,0,A)`, INTENSITY → `(I,I,I,I)`),
+so every backend samples lightmaps natively. The multiply blends were
+already wired (`GL_ZERO`/`GL_SRC_COLOR` and `GL_ZERO`/`GL_ONE_MINUS_SRC_COLOR`
+map through from Phase 4); `test_lightmap_formats` pins the byte→word
+expansion and error behavior at the GL layer, and `test_lightmap_multiply`
+renders a real two-pass checker×gradient frame on swrast and pins it
+against analytic values for the RGBA multiply (`fb = base·lm`), the
+luminance multiply (`fb = base·(1−lm)`), and a `glTexSubImage2D` dynamic
+lightmap update that visibly modulates the lit world. DEFERRED — ViRGE has
+no `GL_ZERO`/`GL_SRC_COLOR` blend in silicon; the lit-world strategy there
+(CPU lightmap compositing vs. vertex-lighting approximation) is Q12, and
+`GL_RGBA4` 16-bit lightmap storage is Q10.
+
 ### Q8. Texture lifetime and delete semantics
 
 Make `glDeleteTextures` actually release storage so per-level texture
