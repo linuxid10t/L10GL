@@ -1095,11 +1095,15 @@ void virge_swap_buffers(struct virge_ctx *ctx)
     ctx->fb_base = ctx->current_back ? ctx->fb_base_back : 0;
 }
 
-static int parse_enabled_default(const char *value, int *enabled)
+static int parse_enabled(const char *value, int default_enabled, int *enabled)
 {
     if (!enabled)
         return -EINVAL;
-    if (!value || !*value || strcmp(value, "1") == 0) {
+    if (!value || !*value) {
+        *enabled = default_enabled;
+        return 0;
+    }
+    if (strcmp(value, "1") == 0) {
         *enabled = 1;
         return 0;
     }
@@ -1112,12 +1116,15 @@ static int parse_enabled_default(const char *value, int *enabled)
 
 int virge_parse_vsync(const char *value, int *enabled)
 {
-    return parse_enabled_default(value, enabled);
+    return parse_enabled(value, 1, enabled);
 }
 
 int virge_parse_autoexec(const char *value, int *enabled)
 {
-    return parse_enabled_default(value, enabled);
+    /* DB019-B documents autoexecute, but real ViRGE/DX testing regressed
+     * cube/gears throughput and corrupted textured rendering. Keep it as an
+     * explicit diagnostic only; the silicon-proven B500 kick is the default. */
+    return parse_enabled(value, 0, enabled);
 }
 
 uint32_t virge_autoexec_command(uint32_t command)
@@ -2565,7 +2572,7 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
     printf("S3 ViRGE: 3D triangle submission: %s\n",
            ctx->autoexec_enabled
                ? "autoexecute (B57C kick; L10GL_AUTOEXEC=1)"
-               : "legacy CMD_SET kick (L10GL_AUTOEXEC=0)");
+               : "legacy CMD_SET kick (default; L10GL_AUTOEXEC=0)");
     printf("  Screen: %dx%d, %d bpp (stride %u)\n",
            ctx->width, ctx->height, bpp * 8, ctx->stride);
     printf("  FB base: 0x%x (back buf 0x%x), Z base: 0x%x\n",

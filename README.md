@@ -341,12 +341,14 @@ severe, but their interval rates were stable. These values show that the two
 30-FPS synchronized results occupied the same two-retrace presentation bucket,
 not that the workloads cost the same.
 
-ViRGE 3D triangles now use DB019-B autoexecute by default. CMD_SET is emitted
-only after a 2D clear or when depth/blend/texture command state changes; B57C
-is the per-triangle kick. Cleanup disables autoexecute with the documented 3D
-NOP. Set `L10GL_AUTOEXEC=0` to restore the former B500-per-triangle launch for
-same-binary A/B measurements. The cleanup log reports emitted versus
-considered CMD_SET writes.
+ViRGE/DX hardware testing rejected DB019-B autoexecute as an optimization.
+With `L10GL_AUTOEXEC=1`, cube fell to 22.19 FPS, textured cube fell to 4.58
+FPS and rendered incorrectly, and gears fell to 26.51 FPS. The exact legacy
+control restored textured cube to its 30.11-FPS synchronized baseline. Normal
+operation therefore uses the silicon-proven B500-per-triangle launch by
+default. Autoexecute remains available only as an explicit diagnostic through
+`L10GL_AUTOEXEC=1`; it must not be used for production rendering on the tested
+ViRGE/DX.
 
 An unknown override is rejected and prints the available backend names. If no
 supported card is present, automatic selection uses offscreen swrast without

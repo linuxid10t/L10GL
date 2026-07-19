@@ -475,8 +475,10 @@ static void test_autoexecute(void)
            "null autoexecute destination is rejected");
     {
         int value = -1;
-        EXPECT(virge_parse_autoexec(NULL, &value) == 0 && value == 1,
-               "autoexecute defaults enabled");
+        EXPECT(virge_parse_autoexec(NULL, &value) == 0 && value == 0,
+               "autoexecute defaults to silicon-proven legacy kick");
+        EXPECT(virge_parse_autoexec("", &value) == 0 && value == 0,
+               "empty autoexecute value keeps legacy kick");
         EXPECT(virge_parse_autoexec("1", &value) == 0 && value == 1,
                "autoexecute one enables optimization");
         EXPECT(virge_parse_autoexec("0", &value) == 0 && value == 0,

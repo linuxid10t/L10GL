@@ -425,35 +425,25 @@ manually stopped because tearing was severe, but interval rates were stable;
 all three runs restored the console normally. The two formerly equal 30-FPS
 workloads are therefore distinct raw costs hidden in the same two-vblank bin.
 
-**Phase 6 item 3 autoexecute implemented 2026-07-18; hardware validation
-pending.** DB019-B section 15.4.3 and CMD_SET bit 0 (absolute PDF pp.110 and
+**Phase 6 item 3 autoexecute tested and rejected on ViRGE/DX 2026-07-18.**
+DB019-B section 15.4.3 and CMD_SET bit 0 (absolute PDF pp.110 and
 250) specify that AE moves the triangle launch from B500 to the highest-address
-triangle register, B57C/TY01_Y12. The driver caches the complete AE-enabled
-command word, re-arms it after every 2D command or 3D state change, and writes
-B57C last for each Gouraud/textured triangle. Cleanup writes the required
-AE-clear 3D NOP before returning the card. `L10GL_AUTOEXEC=0` selects the old
-B500 launch for same-binary comparison; default is enabled. `test-virge-mode`
-pins both parser paths, AE and disable-NOP images, B57C, command reuse/change,
-and 2D invalidation. The cleanup metric `autoexecute emitted X/Y 3D CMD_SET
-writes` directly reports the saved B500 traffic.
+triangle register, B57C/TY01_Y12. The implementation cached the AE-enabled
+command, re-armed it after every 2D command/state change, wrote B57C last, and
+used the documented AE-clear 3D NOP at cleanup. Despite correct-looking command
+counts (`cube` 600/2718, textured 340/1534, gears 600/234796), hardware results
+were decisively negative: direct-front `cube` fell 63.85 -> 22.19 FPS,
+`textured_cube` fell 32.24 -> 4.58 FPS and rendered incorrectly, and `gears`
+fell 34.56 -> 26.51 FPS. The same binary's legacy control completed textured
+cube at 30.11 FPS synchronized, exactly the pre-AE baseline. This isolates the
+regression to autoexecute reuse on DX silicon.
 
-Validate normal presentation first, then collect the raw optimized checkpoint:
-
-```
-sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16
-sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./textured_cube 800 600 16
-sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./gears 800 600 16
-
-sudo env L10GL_VSYNC=0 L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16
-sudo env L10GL_VSYNC=0 L10GL_FRAMES=600 tools/l10gl-run -- ./textured_cube 800 600 16
-sudo env L10GL_VSYNC=0 L10GL_FRAMES=600 tools/l10gl-run -- ./gears 800 600 16
-```
-
-Expect `3D triangle submission: autoexecute (B57C kick;
-L10GL_AUTOEXEC=1)`, complete geometry in the synchronized runs, normal console
-recovery, and one `autoexecute emitted` line per run. If anything is visually
-wrong, repeat the affected command with `L10GL_AUTOEXEC=0`; that is the exact
-legacy B500 trigger path in the same binary and is the decisive A/B control.
+The default is restored to the proven B500-per-triangle trigger. Strict
+`L10GL_AUTOEXEC=1` keeps the documented AE path only for diagnosis or testing
+other ViRGE variants; do not enable it on the target DX. `test-virge-mode`
+continues to pin both parser paths, AE/NOP images, B57C, cache behavior, and
+2D invalidation so the rejected experiment remains reproducible rather than
+being lost.
 
 ```
 sudo env L10GL_FRAMES=600 tools/l10gl-run -- ./cube 800 600 16
@@ -1233,8 +1223,9 @@ never copy):
 - **3D kick semantics:** with autoexecute OFF, the triangle launches on the
   **CMD_SET (0xB500) write** after all parameters. With AE ON, CMD_SET becomes
   persistent state and 0xB57C (TY01/TY12 + L/R in bit 31) is the kick. L10GL
-  now defaults to AE on (changed CMD_SET → parameters → B57C last), while
-  `L10GL_AUTOEXEC=0` retains the old parameters → B57C → CMD_SET sequence.
+  defaults to the silicon-proven AE-off parameters → B57C → CMD_SET sequence.
+  `L10GL_AUTOEXEC=1` retains the documented AE path only as a DX-rejected
+  diagnostic.
 - **3D clip is dead state with HC off** (the rasterizer applies
   clip_t/b/l/r only when the triangle's CMD_SET has HC set; L10GL
   disables HC everywhere). The clip registers cannot cause cutoffs.

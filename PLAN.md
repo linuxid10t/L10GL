@@ -1261,18 +1261,19 @@ over 297 frames, and `gears` 34.56 FPS over 217 frames; the latter two were
 manually stopped because of the severe expected tearing, but their interval
 rates were stable. Console recovery succeeded after every run.
 
-**Item 3 autoexecute implemented 2026-07-18; real-hardware validation
-pending.** DB019-B section 15.4.3 and CMD_SET bit 0 (absolute PDF pp.110 and
+**Item 3 autoexecute tested and rejected on ViRGE/DX 2026-07-18.** DB019-B
+section 15.4.3 and CMD_SET bit 0 (absolute PDF pp.110 and
 250) define B57C/TY01_Y12 as the triangle kick while AE is set. A one-entry
 command cache writes B500 only after a 2D command or when 3D command state
 changes, then every triangle ends with B57C. Cleanup uses the documented
-AE-clear 3D NOP. Autoexecute is the default; strict `L10GL_AUTOEXEC=0` retains
-the old B500 kick for same-binary A/B testing. Tests pin parsing, AE/NOP command
-images, B57C identity, cache reuse/change, and conservative 2D invalidation.
-After item 2 already removed shared-state rewrites, the remaining saving is one
-B500 write per same-state triangle, not half of all triangle MMIO traffic;
-gears should show the clearest effect because it submits roughly 391 triangles
-per frame.
+AE-clear 3D NOP. On real DX silicon this path was slower for every workload:
+direct-front `cube` fell from 63.85 to 22.19 FPS, `textured_cube` from 32.24
+to 4.58 FPS with visible rendering corruption, and `gears` from 34.56 to 26.51
+FPS. The same binary with `L10GL_AUTOEXEC=0` restored textured cube to 30.11
+FPS synchronized, exactly matching the legacy baseline. The B500 launch is
+therefore the default again. `L10GL_AUTOEXEC=1` retains the AE path only for
+diagnosis or other-chip research; tests pin parsing, command images, B57C,
+cache reuse/change, and 2D invalidation.
 
 Ordered by expected win/effort on the ViRGE:
 
@@ -1289,8 +1290,9 @@ Ordered by expected win/effort on the ViRGE:
    Hardware-verified; synchronized presentation remains the dominant limiter.
 3. **Autoexecute mode.** Program CMD_SET once per state change with
    `VIRGE_CMD_AUTOEXEC`, then end each triangle at the TY01_Y12 kick. After
-   dirty-state tracking, this saves one B500 write per same-state triangle;
-   implemented, real-hardware correctness and raw A/B validation pending.
+   dirty-state tracking this saves one B500 write per same-state triangle.
+   Tested and rejected on ViRGE/DX: severe performance loss plus textured
+   corruption. Legacy B500 submission remains the default; item closed.
 4. **Triangle-strip aware register reuse** and, much later, the ViRGE DMA
    command queue (probably not worth it for this project's goals).
 
