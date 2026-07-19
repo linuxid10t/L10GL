@@ -969,6 +969,9 @@ static void swrast_fill_rect(struct l10gl_ctx *ctx,
     }
 }
 
+static void swrast_unlink_texture(struct swrast_private *priv,
+                                  struct swrast_texture *texture);
+
 static int swrast_tex_image_2d(struct l10gl_ctx *ctx,
                                struct l10gl_texture *tex,
                                int width, int height,
@@ -989,6 +992,16 @@ static int swrast_tex_image_2d(struct l10gl_ctx *ctx,
     if (size > SIZE_MAX - sizeof(*texture))
         return -EOVERFLOW;
 
+    /* A re-upload of an already-backed texture replaces its storage; free the
+     * prior allocation first so glTexSubImage2D's whole-level re-uploads (and
+     * plain re-uploads) do not leave one dead image per call in the list (Q8).
+     * backend_data is cleared before the malloc so a failed re-upload leaves
+     * the texture cleanly unbacked rather than dangling. */
+    if (tex->backend_data) {
+        swrast_unlink_texture(priv, tex->backend_data);
+        tex->backend_data = NULL;
+    }
+
     texture = malloc(sizeof(*texture) + size);
     if (!texture)
         return -ENOMEM;
@@ -1006,6 +1019,46 @@ static int swrast_tex_image_2d(struct l10gl_ctx *ctx,
     tex->bytes_per_texel = bytes_per_texel;
     tex->backend_data = texture;
     return 0;
+}
+
+/* Unlink a backend texture from the private allocation list and free its
+ * texel storage. swrast owns every allocation it hands out via backend_data,
+ * so delete and re-upload must reclaim storage rather than leak it until
+ * teardown (Q8). */
+static void swrast_unlink_texture(struct swrast_private *priv,
+                                  struct swrast_texture *texture)
+{
+    struct swrast_texture **link = &priv->textures;
+
+    while (*link && *link != texture)
+        link = &(*link)->next;
+    if (*link)
+        *link = texture->next;
+    free(texture);
+}
+
+static void swrast_tex_free(struct l10gl_ctx *ctx, struct l10gl_texture *tex)
+{
+    struct swrast_private *priv = SWRAST_PRIV(ctx);
+
+    if (!tex || !tex->backend_data)
+        return;
+    swrast_unlink_texture(priv, tex->backend_data);
+    tex->backend_data = NULL;
+}
+
+int swrast_debug_texture_count(const struct l10gl_ctx *ctx)
+{
+    const struct swrast_private *priv =
+        ctx ? (const struct swrast_private *)ctx->backend_data : NULL;
+    const struct swrast_texture *t;
+    int n = 0;
+
+    if (!priv)
+        return -1;
+    for (t = priv->textures; t; t = t->next)
+        n++;
+    return n;
 }
 
 static void swrast_bind_texture(struct l10gl_ctx *ctx,
@@ -1097,6 +1150,7 @@ const struct l10gl_backend swrast_backend = {
     .tex_image_2d           = swrast_tex_image_2d,
     .bind_texture           = swrast_bind_texture,
     .tex_parameter          = swrast_tex_parameter,
+    .tex_free               = swrast_tex_free,
     .wait_engine            = swrast_wait,
     .wait_vsync             = swrast_wait,
     .swap_buffers           = swrast_swap_buffers,

@@ -346,6 +346,14 @@ int l10gl_tex_image_2d(struct l10gl_ctx *ctx, struct l10gl_texture *tex,
     return ctx->backend->tex_image_2d(ctx, tex, width, height, format, data);
 }
 
+void l10gl_tex_free(struct l10gl_ctx *ctx, struct l10gl_texture *tex)
+{
+    if (!ctx || !tex || !ctx->backend->tex_free)
+        return;
+
+    ctx->backend->tex_free(ctx, tex);
+}
+
 void l10gl_bind_texture(struct l10gl_ctx *ctx, struct l10gl_texture *tex)
 {
     ctx->current_texture = tex;

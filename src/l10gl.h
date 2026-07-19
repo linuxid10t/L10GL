@@ -245,6 +245,11 @@ struct l10gl_backend {
     void (*tex_parameter)(struct l10gl_ctx *ctx,
                           enum l10gl_tex_filter filter,
                           enum l10gl_tex_wrap wrap);
+    /* Release the backend storage for a texture when its GL name is deleted
+     * (Q8). Optional: backends whose allocator reclaims only at teardown
+     * (ViRGE's bump allocator, pending the Q8 free-list) leave this NULL and
+     * the frontend no-ops, matching the prior leak-until-teardown behavior. */
+    void (*tex_free)(struct l10gl_ctx *ctx, struct l10gl_texture *tex);
 
     /* --- Synchronization --- */
     void (*wait_engine)(struct l10gl_ctx *ctx);
@@ -480,6 +485,9 @@ void l10gl_bind_texture(struct l10gl_ctx *ctx, struct l10gl_texture *tex);
 void l10gl_tex_parameter(struct l10gl_ctx *ctx,
                          enum l10gl_tex_filter filter,
                          enum l10gl_tex_wrap wrap);
+/* Release backend storage for a texture (Q8). No-op if the backend does not
+ * implement tex_free (e.g. ViRGE until the free-list lands). */
+void l10gl_tex_free(struct l10gl_ctx *ctx, struct l10gl_texture *tex);
 
 /* Sync */
 void l10gl_wait_engine(struct l10gl_ctx *ctx);
@@ -499,5 +507,10 @@ int l10gl_has_cap(struct l10gl_ctx *ctx, unsigned int cap);
 extern const struct l10gl_backend mga1064_backend;
 extern const struct l10gl_backend swrast_backend;
 extern const struct l10gl_backend virge_backend;
+
+/* swrast test/debug aid (Q8): the number of live backend texture allocations.
+ * Used only by the create/delete/re-upload stress tests to prove storage is
+ * reclaimed on delete and not accumulated on re-upload; not a render API. */
+int swrast_debug_texture_count(const struct l10gl_ctx *ctx);
 
 #endif /* L10GL_H */

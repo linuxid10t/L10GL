@@ -380,6 +380,20 @@ churn survives:
 sign-off) ViRGE shows stable memory across simulated level reloads; the
 existing bump-allocation demos still pass; OOM still reports cleanly.
 
+*Status (Q8, swrast gate):* DONE (shim + swrast) — the retained CPU copy was
+already freed with the name; `glDeleteTextures` now also calls a new optional
+backend `tex_free` hook (`l10gl_tex_free`), and swrast implements it by
+unlinking the texture from its private allocation list and freeing the texel
+store. `swrast_tex_image_2d` additionally frees the prior allocation on
+re-upload, so Q4's whole-level subimage re-uploads (one per dynamic light
+update per frame) no longer leak one dead image per call. `test_texture_lifetime`
+drives the GL delete path on swrast and pins, via `swrast_debug_texture_count`,
+that create/delete/create cycles, repeated re-uploads, and a `glTexSubImage2D`
+storm all hold a stable allocation count (level-reload memory stability).
+DEFERRED — ViRGE still uses the bump allocator (leak-until-teardown); its
+free-list allocator (first-fit + coalescing) and the human hardware sign-off
+are Stage 3, gated behind the Q9 swrast milestone.
+
 ### Q9. The GLQuake port and the swrast "up and running" gate
 
 In the separate GPL repository: port GLQuake's platform layer to L10GL —

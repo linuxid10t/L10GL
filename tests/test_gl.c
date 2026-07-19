@@ -1242,6 +1242,78 @@ static void test_lightmap_multiply(void)
     rmdir(directory);
 }
 
+/* Q8: glDeleteTextures reclaims backend storage, and re-upload / subimage
+ * churn does not accumulate dead allocations, so simulated Quake level reloads
+ * (the engine rebuilds its entire texture set on every map load) keep memory
+ * stable. swrast_debug_texture_count is the oracle for the live allocation
+ * list; the GL delete path is driven through glDeleteTextures so the whole
+ * glDeleteTextures -> l10gl_tex_free -> swrast_tex_free chain is exercised. */
+static void test_texture_lifetime(void)
+{
+    static const GLubyte texel[4] = { 255, 0, 0, 255 };
+    struct l10gl_ctx ctx;
+    GLuint names[4], reuse;
+    int i;
+
+    if (l10gl_create(&ctx, &swrast_backend, 4, 4, 3) != 0) {
+        fprintf(stderr, "test-gl: cannot create texture-lifetime context\n");
+        failures++;
+        return;
+    }
+    l10glMakeCurrent(&ctx);
+    expect_int("lifetime starts empty",
+               swrast_debug_texture_count(&ctx), 0);
+
+    /* Four textures uploaded: one backend allocation each. */
+    glGenTextures(4, names);
+    for (i = 0; i < 4; i++) {
+        glBindTexture(GL_TEXTURE_2D, names[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    }
+    expect_int("four uploads allocate four",
+               swrast_debug_texture_count(&ctx), 4);
+
+    /* Deleting frees backend storage, not just the GL name. */
+    glDeleteTextures(2, &names[2]);
+    expect_int("delete frees two", swrast_debug_texture_count(&ctx), 2);
+    glDeleteTextures(2, &names[0]);
+    expect_int("delete frees the rest", swrast_debug_texture_count(&ctx), 0);
+
+    /* A fresh create after a full delete reuses freed storage (level reload):
+     * count rises to one and falls back to zero. */
+    glGenTextures(1, &reuse);
+    glBindTexture(GL_TEXTURE_2D, reuse);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    expect_int("reload allocates one", swrast_debug_texture_count(&ctx), 1);
+    glDeleteTextures(1, &reuse);
+    expect_int("reload frees one", swrast_debug_texture_count(&ctx), 0);
+
+    /* Re-uploading the same name replaces storage rather than leaking. */
+    glGenTextures(1, &reuse);
+    glBindTexture(GL_TEXTURE_2D, reuse);
+    for (i = 0; i < 10; i++)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    expect_int("re-upload does not leak", swrast_debug_texture_count(&ctx), 1);
+
+    /* A glTexSubImage2D storm (Q4 re-uploads the whole level each call) must
+     * not accumulate one dead image per update either. */
+    for (i = 0; i < 10; i++)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA,
+                        GL_UNSIGNED_BYTE, texel);
+    expect_int("subimage storm does not leak",
+               swrast_debug_texture_count(&ctx), 1);
+
+    glDeleteTextures(1, &reuse);
+    expect_int("final delete empties list",
+               swrast_debug_texture_count(&ctx), 0);
+
+    l10glMakeCurrent(NULL);
+    l10gl_destroy(&ctx);
+}
+
 int main(void)
 {
     struct l10gl_ctx ctx;
@@ -1271,6 +1343,7 @@ int main(void)
     test_swrast_texture_pixels();
     test_swrast_subimage_equivalence();
     test_lightmap_multiply();
+    test_texture_lifetime();
 
     if (failures) {
         fprintf(stderr, "test-gl: %d failure(s)\n", failures);

@@ -851,10 +851,12 @@ void glDeleteTextures(GLsizei n, const GLuint *textures)
                 gl_state.bound_texture = &gl_state.default_texture;
                 gl_apply_texture_binding(ctx);
             }
-            /* Backend allocations intentionally live until context teardown:
-             * swrast owns its allocation list and ViRGE uses a VRAM bump
-             * allocator. Only the GL name/object metadata (and the Q4
-             * retained CPU image) is reclaimed here. */
+            /* Reclaim backend storage if the backend supports it (Q8): swrast
+             * frees its allocation; ViRGE's bump allocator does not yet, so
+             * tex_free is NULL there and storage lives until teardown (the
+             * Stage 3 free-list closes that gap). The retained CPU image (Q4)
+             * is always reclaimed with the name. */
+            l10gl_tex_free(ctx, &dead->texture);
             free(dead->retained);
             free(dead);
         }
