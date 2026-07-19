@@ -492,6 +492,125 @@ static void test_near_plane_clipping(struct l10gl_ctx *ctx)
     l10gl_load_identity(ctx);
 }
 
+/* A convex pentagon. Vertices are listed counter-clockwise, so the forward
+ * order is front-facing under CULL_BACK; "reverse" submits the same five
+ * vertices clockwise. Each vertex is tagged by its red channel so it stays
+ * identifiable through the fan decomposition. z selects a uniform eye depth. */
+static void submit_pentagon(struct l10gl_ctx *ctx, enum l10gl_primitive prim,
+                            int reverse, float z)
+{
+    static const float xy[5][2] = {
+        { 0.0f,  0.5f},
+        {-0.5f,  0.2f},
+        {-0.4f, -0.7f},
+        { 0.4f, -0.7f},
+        { 0.5f,  0.2f},
+    };
+    int order[5] = {0, 1, 2, 3, 4};
+
+    if (reverse) {
+        order[1] = 4; order[2] = 3; order[3] = 2; order[4] = 1;
+    }
+    l10gl_begin(ctx, prim);
+    for (int i = 0; i < 5; i++)
+        submit_colored_vertex(ctx, xy[order[i]][0], xy[order[i]][1], z,
+                              0.1f * (i + 1));
+    l10gl_end(ctx);
+}
+
+static void test_polygon_assembly(struct l10gl_ctx *ctx)
+{
+    struct captured_triangle fan_dump[MAX_CAPTURED];
+    int fan_count, i, j;
+
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
+    l10gl_viewport(ctx, 0, 0, 100, 80);
+    l10gl_cull_face(ctx, L10GL_CULL_BACK);
+
+    /* A convex polygon decomposes as a fan from its first vertex: a
+     * 5-vertex pentagon yields three triangles all sharing vertex 0. */
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 0, 0);
+    expect_int("polygon triangle count", capture.triangle_count, 3);
+    expect_float("polygon t0 origin", capture.triangles[0].v[0].r, .1f);
+    expect_float("polygon t0 v1", capture.triangles[0].v[1].r, .2f);
+    expect_float("polygon t0 v2", capture.triangles[0].v[2].r, .3f);
+    expect_float("polygon t1 origin", capture.triangles[1].v[0].r, .1f);
+    expect_float("polygon t1 v1", capture.triangles[1].v[1].r, .3f);
+    expect_float("polygon t1 v2", capture.triangles[1].v[2].r, .4f);
+    expect_float("polygon t2 origin", capture.triangles[2].v[0].r, .1f);
+    expect_float("polygon t2 v1", capture.triangles[2].v[1].r, .4f);
+    expect_float("polygon t2 v2", capture.triangles[2].v[2].r, .5f);
+
+    /* The polygon's triangles must be identical to those the equivalent
+     * triangle fan emits — same count, same vertices, same order. */
+    fan_count = capture.triangle_count;
+    memcpy(fan_dump, capture.triangles, sizeof(fan_dump));
+    reset_capture();
+    submit_pentagon(ctx, L10GL_TRIANGLE_FAN, 0, 0);
+    expect_int("fan matches polygon count",
+               capture.triangle_count, fan_count);
+    for (i = 0; i < fan_count; i++)
+        for (j = 0; j < 3; j++)
+            expect_float("fan matches polygon vertex",
+                         capture.triangles[i].v[j].r, fan_dump[i].v[j].r);
+
+    /* Culling acts on the whole polygon: every fan triangle of a convex
+     * polygon shares its facing, so a back-facing polygon is fully
+     * rejected and a front-facing one fully retained. */
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 0, 0);
+    expect_int("front-facing polygon retained",
+               capture.triangle_count, 3);
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 1, 0);
+    expect_int("back-facing polygon culled", capture.triangle_count, 0);
+    l10gl_cull_face(ctx, L10GL_CULL_NONE);
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 1, 0);
+    expect_int("reversed polygon retained without culling",
+               capture.triangle_count, 3);
+
+    /* Near-plane clipping runs per emitted triangle. A polygon wholly in
+     * front of the near plane is untouched; wholly behind it is dropped;
+     * a straddling polygon clips to a bounded nonzero set. */
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    expect_int("polygon clip setup",
+               l10gl_perspective(ctx, 90, 1, 1, 10), 0);
+
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 0, -2);
+    expect_int("polygon fully in view unclipped",
+               capture.triangle_count, 3);
+
+    reset_capture();
+    submit_pentagon(ctx, L10GL_POLYGON, 0, -.5f);
+    expect_int("polygon fully behind near dropped",
+               capture.triangle_count, 0);
+
+    /* One vertex (the third, tagged .3) sits between the eye and the near
+     * plane; the other four remain in view, so clipping produces a bounded,
+     * nonzero set of triangles. */
+    reset_capture();
+    l10gl_begin(ctx, L10GL_POLYGON);
+    submit_colored_vertex(ctx,  0.0f,  0.5f, -2,   .1f);
+    submit_colored_vertex(ctx, -0.5f,  0.2f, -2,   .2f);
+    submit_colored_vertex(ctx, -0.4f, -0.7f, -.5f, .3f);
+    submit_colored_vertex(ctx,  0.4f, -0.7f, -2,   .4f);
+    submit_colored_vertex(ctx,  0.5f,  0.2f, -2,   .5f);
+    l10gl_end(ctx);
+    expect_int("straddling polygon clipped nonzero",
+               capture.triangle_count > 0, 1);
+    expect_int("straddling polygon clipped bounded",
+               capture.triangle_count <= 6, 1);
+
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
+}
+
 static void test_triangle_scan_guard(struct l10gl_ctx *ctx)
 {
     l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
@@ -745,6 +864,7 @@ int main(void)
     test_line_assembly(&ctx);
     test_culling_and_clip_rejection(&ctx);
     test_near_plane_clipping(&ctx);
+    test_polygon_assembly(&ctx);
     test_triangle_scan_guard(&ctx);
     test_perspective_texture_w(&ctx);
     test_directional_lighting(&ctx);
@@ -754,7 +874,7 @@ int main(void)
         fprintf(stderr, "test-pipeline: FAILED (%d checks)\n", failures);
         return 1;
     }
-    printf("test-pipeline: PASS (attributes, triangle/quad assembly, transforms, culling, "
+    printf("test-pipeline: PASS (attributes, triangle/quad/polygon assembly, transforms, culling, "
            "near clipping, interpolation, scan guard, lighting, perspective W)\n");
     return 0;
 }

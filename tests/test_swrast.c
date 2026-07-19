@@ -292,6 +292,123 @@ done:
     return failed ? -1 : 0;
 }
 
+/* A convex pentagon submitted through the immediate-mode frontend, drawn
+ * identically as either a polygon or a triangle fan. White vertex color so
+ * the texture is sampled unmodified; texcoords span the 2x2 texture. */
+static void draw_textured_pentagon(struct l10gl_ctx *ctx,
+                                   enum l10gl_primitive prim)
+{
+    l10gl_begin(ctx, prim);
+    l10gl_color4f(ctx, 1, 1, 1, 1); l10gl_texcoord2f(ctx, .5f, 1);
+    l10gl_vertex3f(ctx,  0.0f,  0.7f, 0);
+    l10gl_color4f(ctx, 1, 1, 1, 1); l10gl_texcoord2f(ctx, 1, .5f);
+    l10gl_vertex3f(ctx,  0.6f,  0.2f, 0);
+    l10gl_color4f(ctx, 1, 1, 1, 1); l10gl_texcoord2f(ctx, .8f, 0);
+    l10gl_vertex3f(ctx,  0.4f, -0.7f, 0);
+    l10gl_color4f(ctx, 1, 1, 1, 1); l10gl_texcoord2f(ctx, .2f, 0);
+    l10gl_vertex3f(ctx, -0.4f, -0.7f, 0);
+    l10gl_color4f(ctx, 1, 1, 1, 1); l10gl_texcoord2f(ctx, 0, .5f);
+    l10gl_vertex3f(ctx, -0.6f,  0.2f, 0);
+    l10gl_end(ctx);
+}
+
+static int render_pentagon_dump(const char *path, enum l10gl_primitive prim)
+{
+    static const uint32_t texels[4] = {
+        0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffffff,
+    };
+    struct l10gl_texture texture = {0};
+    struct l10gl_ctx ctx;
+
+    if (setenv("L10GL_SWRAST_DUMP", path, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 24, 16, 3) < 0) {
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_clear_color(&ctx, 0, 0, 0);
+    l10gl_clear_depth(&ctx, 1);
+    l10gl_clear(&ctx);
+    l10gl_enable_depth_test(&ctx, 0);
+    l10gl_enable_blend(&ctx, 0);
+    l10gl_cull_face(&ctx, L10GL_CULL_NONE);
+    l10gl_matrix_mode(&ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(&ctx);
+    l10gl_matrix_mode(&ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(&ctx);
+    l10gl_viewport(&ctx, 0, 0, 24, 16);
+    if (l10gl_tex_image_2d(&ctx, &texture, 2, 2, L10GL_TEX_FMT_ARGB8888,
+                           texels) < 0) {
+        l10gl_destroy(&ctx);
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_REPEAT);
+    l10gl_bind_texture(&ctx, &texture);
+    draw_textured_pentagon(&ctx, prim);
+    l10gl_swap_buffers(&ctx);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+    return 0;
+}
+
+/* A textured convex polygon and the equivalent triangle fan must rasterize
+ * to byte-identical pixels: the polygon's fan decomposition emits the same
+ * triangles in the same order. */
+static int test_polygon_matches_fan(const char *directory)
+{
+    char poly_path[256];
+    char fan_path[256];
+    struct rgb *poly = NULL;
+    struct rgb *fan = NULL;
+    size_t count = (size_t)24 * 16, i;
+    int failed = 0, painted = 0;
+
+    snprintf(poly_path, sizeof(poly_path), "%s/poly.ppm", directory);
+    snprintf(fan_path, sizeof(fan_path), "%s/fan.ppm", directory);
+    if (render_pentagon_dump(poly_path, L10GL_POLYGON) < 0 ||
+        render_pentagon_dump(fan_path, L10GL_TRIANGLE_FAN) < 0) {
+        fprintf(stderr, "test-swrast: polygon/fan dump failed\n");
+        return -1;
+    }
+    poly = read_ppm(poly_path, 24, 16);
+    fan = read_ppm(fan_path, 24, 16);
+    if (!poly || !fan) {
+        failed = 1;
+        goto done;
+    }
+    if (memcmp(poly, fan, count * sizeof(*poly)) != 0) {
+        fprintf(stderr, "test-swrast: polygon frame differs from fan frame\n");
+        for (i = 0; i < count; i++)
+            if (poly[i].r != fan[i].r || poly[i].g != fan[i].g ||
+                poly[i].b != fan[i].b) {
+                fprintf(stderr, "test-swrast: first diff at (%zu,%zu): "
+                        "poly=(%u,%u,%u) fan=(%u,%u,%u)\n",
+                        i % 24, i / 24,
+                        poly[i].r, poly[i].g, poly[i].b,
+                        fan[i].r, fan[i].g, fan[i].b);
+                break;
+            }
+        failed = 1;
+    }
+    /* Reject a vacuous pass: the polygon must have painted something, so the
+     * equality above is comparing real rasterization, not two empty frames. */
+    for (i = 0; i < count; i++)
+        if (poly[i].r || poly[i].g || poly[i].b)
+            painted++;
+    if (painted == 0) {
+        fprintf(stderr, "test-swrast: polygon painted no pixels\n");
+        failed = 1;
+    }
+
+done:
+    free(poly);
+    free(fan);
+    unlink(poly_path);
+    unlink(fan_path);
+    return failed ? -1 : 0;
+}
+
 int main(void)
 {
     char directory[] = "/tmp/l10gl-swrast-test.XXXXXX";
@@ -314,6 +431,7 @@ int main(void)
     failed |= test_reference_frame(reference_path);
     failed |= test_rgb565_dump(rgb565_path);
     failed |= test_double_buffered_swaps(directory);
+    failed |= test_polygon_matches_fan(directory);
 
     unlink(reference_path);
     unlink(rgb565_path);
@@ -323,6 +441,6 @@ int main(void)
         return 1;
     }
     printf("test-swrast: PASS (coverage, blend, depth, perspective, "
-           "bilinear, RGB565, PPM, double buffering)\n");
+           "bilinear, RGB565, PPM, double buffering, polygon==fan)\n");
     return 0;
 }

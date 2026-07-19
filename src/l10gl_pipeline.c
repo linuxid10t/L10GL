@@ -66,6 +66,7 @@ static int primitive_supported(enum l10gl_primitive primitive)
     return primitive == L10GL_TRIANGLES ||
            primitive == L10GL_TRIANGLE_STRIP ||
            primitive == L10GL_TRIANGLE_FAN ||
+           primitive == L10GL_POLYGON ||
            primitive == L10GL_QUADS ||
            primitive == L10GL_QUAD_STRIP ||
            primitive == L10GL_LINES ||
@@ -377,6 +378,23 @@ static void assemble_vertex(struct l10gl_ctx *ctx,
         break;
 
     case L10GL_TRIANGLE_FAN:
+        if (count == 0)
+            slots[0] = vertex;
+        else if (count == 1)
+            slots[1] = vertex;
+        else {
+            emit_triangle(ctx, &slots[0], &slots[1], &vertex);
+            slots[1] = vertex;
+        }
+        count++;
+        break;
+
+    case L10GL_POLYGON:
+        /* GL_POLYGON is required to be convex; for convex input its fan
+         * decomposition is identical to L10GL_TRIANGLE_FAN (shared first
+         * vertex, each subsequent vertex forms a triangle with the previous
+         * one). The provoking vertex for flat shading is the last vertex of
+         * each emitted triangle, matching the fan. */
         if (count == 0)
             slots[0] = vertex;
         else if (count == 1)

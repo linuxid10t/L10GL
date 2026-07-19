@@ -183,6 +183,7 @@ static int gl_primitive(GLenum mode, enum l10gl_primitive *primitive)
     case GL_TRIANGLES:      *primitive = L10GL_TRIANGLES; return 0;
     case GL_TRIANGLE_STRIP: *primitive = L10GL_TRIANGLE_STRIP; return 0;
     case GL_TRIANGLE_FAN:   *primitive = L10GL_TRIANGLE_FAN; return 0;
+    case GL_POLYGON:        *primitive = L10GL_POLYGON; return 0;
     case GL_QUADS:          *primitive = L10GL_QUADS; return 0;
     case GL_QUAD_STRIP:     *primitive = L10GL_QUAD_STRIP; return 0;
     case GL_LINES:          *primitive = L10GL_LINES; return 0;

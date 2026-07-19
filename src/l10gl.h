@@ -51,6 +51,7 @@ enum l10gl_primitive {
     L10GL_TRIANGLES,     /* Every 3 vertices = 1 triangle */
     L10GL_TRIANGLE_STRIP,/* Strip of triangles sharing edges */
     L10GL_TRIANGLE_FAN,  /* Fan of triangles sharing first vertex */
+    L10GL_POLYGON,       /* Convex polygon: fan from the first vertex */
     L10GL_QUADS,         /* Every 4 vertices = 2 triangles */
     L10GL_QUAD_STRIP,    /* Paired vertices form connected quads */
     L10GL_LINES,         /* Independent line segments */
