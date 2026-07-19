@@ -317,6 +317,16 @@ them; Phase 8 C5/C6).
 textures on swrast; REPLACE with non-white vertex color demonstrably
 ignores the color; ViRGE runs a mode-comparison demo for human sign-off.
 
+*Status (Q6, swrast gate):* DONE — `glTexEnvf`/`glTexEnvi` push a frontend
+`tex_env_mode` (`L10GL_CAP_TEX_ENV`) and swrast's textured fragment path
+applies all three modes. RGB equations are pinned with blend off (MODULATE
+`C=v·t`, REPLACE `C=t` ignoring vertex color, DECAL `C=v·(1−ta)+t·ta` on
+RGBA / texel copy on RGB); the alpha source is pinned by blending over
+black (MODULATE `A=va·ta`, REPLACE `A=ta`, DECAL `A=va`). DEFERRED: ViRGE
+silicon still hardwires MODULATE — native REPLACE/DECAL (TB decal blend) is
+Stage 3/Phase 8 C5, gated on equation-level equivalence, plus the
+mode-comparison demo. GL_BLEND/GL_ADD env stay out of scope (Phase 8 C6).
+
 ## Stage 2 — GLQuake runs correctly on swrast
 
 ### Q7. Lightmap formats and the multiply pass

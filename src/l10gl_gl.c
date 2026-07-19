@@ -1275,25 +1275,31 @@ void glAlphaFunc(GLenum func, GLclampf ref)
 
 void glTexEnvf(GLenum target, GLenum pname, GLfloat param)
 {
-    if (!gl_current())
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_tex_env mode;
+
+    if (!ctx)
         return;
     if (target != GL_TEXTURE_ENV || pname != GL_TEXTURE_ENV_MODE) {
         gl_record_error(GL_INVALID_ENUM);
         return;
     }
     switch ((GLenum)param) {
-    case GL_MODULATE:
-    case GL_DECAL:
-    case GL_REPLACE:
-        break;
+    case GL_MODULATE: mode = L10GL_TEX_ENV_MODULATE; break;
+    case GL_DECAL:    mode = L10GL_TEX_ENV_DECAL;    break;
+    case GL_REPLACE:  mode = L10GL_TEX_ENV_REPLACE;  break;
     default:
         /* GL_BLEND/GL_ADD texture environments are out of scope (Phase 8). */
         gl_record_error(GL_INVALID_ENUM);
         return;
     }
     gl_state.env_mode = (GLenum)param;
-    /* Q6 wires env_mode into the fragment path; MODULATE is the current
-     * fixed behavior, so this is observationally a no-op until then. */
+    l10gl_tex_env(ctx, mode);
+}
+
+void glTexEnvi(GLenum target, GLenum pname, GLint param)
+{
+    glTexEnvf(target, pname, (GLfloat)param);
 }
 
 void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,

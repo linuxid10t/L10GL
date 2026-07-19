@@ -228,6 +228,7 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
 
 void glAlphaFunc(GLenum func, GLclampf ref);
 void glTexEnvf(GLenum target, GLenum pname, GLfloat param);
+void glTexEnvi(GLenum target, GLenum pname, GLint param);
 void glTexSubImage2D(GLenum target, GLint level, GLint xoffset,
                      GLint yoffset, GLsizei width, GLsizei height,
                      GLenum format, GLenum type, const GLvoid *pixels);

@@ -159,6 +159,17 @@ enum l10gl_tex_wrap {
     L10GL_WRAP_CLAMP,
 };
 
+/* Texture environment: how a sampled texel combines with the fragment's
+ * interpolated color (glTexEnv). MODULATE is the GL default; REPLACE and
+ * DECAL differ on RGBA textures (alpha source) and DECAL blends RGB by the
+ * texel alpha. The RGB-vs-RGBA split is fixed by the texture's base format
+ * (whether it carries an alpha channel). */
+enum l10gl_tex_env {
+    L10GL_TEX_ENV_MODULATE,
+    L10GL_TEX_ENV_REPLACE,
+    L10GL_TEX_ENV_DECAL,
+};
+
 /*
  * Texture object. Allocated by the application, filled by the backend.
  * The backend stores its private data (VRAM address, hardware format)
@@ -255,6 +266,7 @@ struct l10gl_backend {
 #define L10GL_CAP_BILINEAR    (1 << 7)  /* Bilinear texture filtering */
 #define L10GL_CAP_PERSPECTIVE (1 << 8)  /* Perspective-correct texture mapping */
 #define L10GL_CAP_ALPHA_TEST (1 << 9)  /* Per-fragment alpha test */
+#define L10GL_CAP_TEX_ENV (1 << 10)    /* Selectable texture environment */
 
 /* ========================================================================
  * Context
@@ -297,6 +309,11 @@ struct l10gl_ctx {
     int blend_enabled;
     enum l10gl_blend_func blend_sfactor;
     enum l10gl_blend_func blend_dfactor;
+
+    /* Cached texture-environment mode (Q6). swrast's textured fragment path
+     * applies it (MODULATE/REPLACE/DECAL); ViRGE only wires MODULATE on
+     * silicon today (Stage 3/Phase 8 evaluates native decal). */
+    enum l10gl_tex_env tex_env_mode;
 
     /* Current texture (NULL = no texture bound) */
     struct l10gl_texture *current_texture;
@@ -370,6 +387,7 @@ void l10gl_enable_blend(struct l10gl_ctx *ctx, int enable);
 void l10gl_enable_alpha_test(struct l10gl_ctx *ctx, int enable);
 void l10gl_alpha_func(struct l10gl_ctx *ctx, enum l10gl_depth_func func,
                       float ref);
+void l10gl_tex_env(struct l10gl_ctx *ctx, enum l10gl_tex_env mode);
 void l10gl_blend_func(struct l10gl_ctx *ctx,
                       enum l10gl_blend_func sfactor,
                       enum l10gl_blend_func dfactor);

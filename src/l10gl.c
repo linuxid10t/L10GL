@@ -125,6 +125,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
     ctx->blend_enabled = 0;
     ctx->blend_sfactor = L10GL_SRC_ALPHA;
     ctx->blend_dfactor = L10GL_ONE_MINUS_SRC_ALPHA;
+    ctx->tex_env_mode = L10GL_TEX_ENV_MODULATE;
     ctx->current_texture = NULL;
 
     /* P2 must snapshot the original fbdev mode before P1 backend init has an
@@ -168,7 +169,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
            ctx->pixel_format.green.offset, ctx->pixel_format.green.length,
            ctx->pixel_format.blue.offset, ctx->pixel_format.blue.length,
            ctx->pixel_format.alpha.offset, ctx->pixel_format.alpha.length);
-    printf("  Caps: %s%s%s%s%s%s%s%s%s%s\n",
+    printf("  Caps: %s%s%s%s%s%s%s%s%s%s%s\n",
            ctx->backend->caps & L10GL_CAP_GOURAUD     ? "Gouraud " : "",
            ctx->backend->caps & L10GL_CAP_ZBUFFER     ? "Z-buffer " : "",
            ctx->backend->caps & L10GL_CAP_LINES       ? "Lines " : "",
@@ -178,7 +179,8 @@ int l10gl_create(struct l10gl_ctx *ctx,
            ctx->backend->caps & L10GL_CAP_BILINEAR    ? "Bilinear " : "",
            ctx->backend->caps & L10GL_CAP_TRILINEAR   ? "Trilinear " : "",
            ctx->backend->caps & L10GL_CAP_PERSPECTIVE ? "Perspective " : "",
-           ctx->backend->caps & L10GL_CAP_ALPHA_TEST  ? "AlphaTest " : "");
+           ctx->backend->caps & L10GL_CAP_ALPHA_TEST  ? "AlphaTest " : "",
+           ctx->backend->caps & L10GL_CAP_TEX_ENV     ? "TexEnv " : "");
 
     return 0;
 }
@@ -255,6 +257,14 @@ void l10gl_alpha_func(struct l10gl_ctx *ctx, enum l10gl_depth_func func,
 {
     ctx->alpha_func_val = func;
     ctx->alpha_ref = ref < 0.0f ? 0.0f : (ref > 1.0f ? 1.0f : ref);
+}
+
+/* Texture environment has no backend hook: swrast reads tex_env_mode directly
+ * in its textured fragment path. ViRGE hardwires MODULATE on silicon today;
+ * REPLACE/DECAL on ViRGE is deferred to Stage 3/Phase 8 (native decal). */
+void l10gl_tex_env(struct l10gl_ctx *ctx, enum l10gl_tex_env mode)
+{
+    ctx->tex_env_mode = mode;
 }
 
 void l10gl_enable_blend(struct l10gl_ctx *ctx, int enable)

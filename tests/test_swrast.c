@@ -671,6 +671,184 @@ static int test_alpha_test_depth_untouched(const char *directory)
     return failed ? -1 : 0;
 }
 
+/* Render a single textured fragment with a given texture-environment mode and
+ * 1x1 texture, returning the resulting pixel. Blend is selectable so the
+ * alpha equation becomes observable (blending over black yields
+ * result_rgb = postenv_rgb * postenv_alpha). */
+static int render_tex_env_pixel(const char *path, enum l10gl_tex_env mode,
+                                enum l10gl_tex_format fmt, uint32_t texel,
+                                float vr, float vg, float vb, float va,
+                                int blend, struct rgb *out)
+{
+    struct l10gl_texture texture = {0};
+    struct l10gl_ctx ctx;
+    struct rgb *px;
+    int rc;
+
+    if (setenv("L10GL_SWRAST_DUMP", path, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 1, 1, 3) < 0) {
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_clear_color(&ctx, 0, 0, 0);
+    l10gl_clear_depth(&ctx, 1);
+    l10gl_clear(&ctx);
+    l10gl_enable_depth_test(&ctx, 0);
+    l10gl_enable_blend(&ctx, blend);
+    l10gl_tex_env(&ctx, mode);
+    l10gl_cull_face(&ctx, L10GL_CULL_NONE);
+    l10gl_matrix_mode(&ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(&ctx);
+    l10gl_matrix_mode(&ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(&ctx);
+    l10gl_viewport(&ctx, 0, 0, 1, 1);
+    if (l10gl_tex_image_2d(&ctx, &texture, 1, 1, fmt, &texel) < 0) {
+        l10gl_destroy(&ctx);
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_tex_parameter(&ctx, L10GL_FILTER_NEAREST, L10GL_WRAP_CLAMP);
+    l10gl_bind_texture(&ctx, &texture);
+    l10gl_draw_textured_triangle(&ctx,
+                                 vertex(0, 0, 0, 1, vr, vg, vb, va, 0, 0),
+                                 vertex(2, 0, 0, 1, vr, vg, vb, va, 0, 0),
+                                 vertex(0, 2, 0, 1, vr, vg, vb, va, 0, 0));
+    l10gl_swap_buffers(&ctx);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+    px = read_ppm(path, 1, 1);
+    rc = px ? 0 : -1;
+    if (px)
+        *out = px[0];
+    free(px);
+    return rc;
+}
+
+/* The three texture environments (MODULATE/REPLACE/DECAL) split on whether
+ * the texture has an alpha channel. RGB equations are pinned with blend off;
+ * the alpha source (fragment vs texel vs blend) is pinned by blending over
+ * black so result_rgb tracks postenv_alpha. */
+static int test_tex_env_modes(const char *directory)
+{
+    char path[256];
+    struct rgb px;
+    int failed = 0;
+
+    snprintf(path, sizeof(path), "%s/texenv.ppm", directory);
+
+    /* RGBA texture (ARGB8888): texel = half-alpha red (1,0,0,~0.5), vertex
+     * color (200,100,50). Blend off isolates the RGB equations. */
+    {
+        const uint32_t red_half = 0x80ff0000;  /* a=128, r=255, g=0, b=0 */
+        const float vr = 200.0f / 255.0f;
+        const float vg = 100.0f / 255.0f;
+        const float vb = 50.0f / 255.0f;
+
+        /* MODULATE: C = v*t -> (200,0,0). */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_MODULATE,
+                                 L10GL_TEX_FMT_ARGB8888, red_half,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 200, 0, 0, "rgba modulate");
+        else
+            failed = 1;
+
+        /* REPLACE: C = t, vertex color ignored -> (255,0,0). */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_REPLACE,
+                                 L10GL_TEX_FMT_ARGB8888, red_half,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 255, 0, 0,
+                                   "rgba replace ignores color");
+        else
+            failed = 1;
+
+        /* DECAL: C = v*(1-ta)+t*ta -> (228,50,25). */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_DECAL,
+                                 L10GL_TEX_FMT_ARGB8888, red_half,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 228, 50, 25, "rgba decal");
+        else
+            failed = 1;
+    }
+
+    /* RGB texture (RGB565, no alpha): the sampler reports texel alpha 1.0, so
+     * DECAL has no alpha to blend and copies the texel like REPLACE. */
+    {
+        const uint32_t red565 = 0xf800u;  /* r=31/31, g=0, b=0 */
+        const float vr = 200.0f / 255.0f;
+        const float vg = 100.0f / 255.0f;
+        const float vb = 50.0f / 255.0f;
+
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_MODULATE,
+                                 L10GL_TEX_FMT_RGB565, red565,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 200, 0, 0, "rgb modulate");
+        else
+            failed = 1;
+
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_REPLACE,
+                                 L10GL_TEX_FMT_RGB565, red565,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 255, 0, 0, "rgb replace");
+        else
+            failed = 1;
+
+        /* DECAL on an alpha-less texture == REPLACE: texel copied. */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_DECAL,
+                                 L10GL_TEX_FMT_RGB565, red565,
+                                 vr, vg, vb, 1.0f, 0, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 255, 0, 0, "rgb decal==replace");
+        else
+            failed = 1;
+    }
+
+    /* Alpha probes via blending over black (result_rgb = postenv_rgb *
+     * postenv_alpha), white texel + white vertex to isolate the alpha term. */
+    {
+        const uint32_t white_half = 0x80ffffff;   /* a=128 */
+        const uint32_t white_opaque = 0xffffffff; /* a=255 */
+
+        /* texel alpha ~0.5, vertex alpha 1: MODULATE/REPLACE source the
+         * texel alpha (->128); DECAL keeps the fragment alpha (->255). */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_MODULATE,
+                                 L10GL_TEX_FMT_ARGB8888, white_half,
+                                 1, 1, 1, 1.0f, 1, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 128, 128, 128,
+                                   "modulate alpha=ta");
+        else
+            failed = 1;
+
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_DECAL,
+                                 L10GL_TEX_FMT_ARGB8888, white_half,
+                                 1, 1, 1, 1.0f, 1, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 255, 255, 255,
+                                   "decal keeps va");
+        else
+            failed = 1;
+
+        /* texel alpha 1, vertex alpha 0.25: REPLACE sources the texel alpha
+         * (->255); MODULATE multiplies them (->64). */
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_REPLACE,
+                                 L10GL_TEX_FMT_ARGB8888, white_opaque,
+                                 1, 1, 1, 0.25f, 1, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 255, 255, 255,
+                                   "replace alpha=ta");
+        else
+            failed = 1;
+
+        if (render_tex_env_pixel(path, L10GL_TEX_ENV_MODULATE,
+                                 L10GL_TEX_FMT_ARGB8888, white_opaque,
+                                 1, 1, 1, 0.25f, 1, &px) == 0)
+            failed |= expect_pixel(&px, 1, 0, 0, 64, 64, 64,
+                                   "modulate alpha=va*ta");
+        else
+            failed = 1;
+    }
+
+    unlink(path);
+    return failed ? -1 : 0;
+}
+
 int main(void)
 {
     char directory[] = "/tmp/l10gl-swrast-test.XXXXXX";
@@ -697,6 +875,7 @@ int main(void)
     failed |= test_rectangular_textures(directory);
     failed |= test_alpha_test_truth_table(directory);
     failed |= test_alpha_test_depth_untouched(directory);
+    failed |= test_tex_env_modes(directory);
 
     unlink(reference_path);
     unlink(rgb565_path);
@@ -707,6 +886,6 @@ int main(void)
     }
     printf("test-swrast: PASS (coverage, blend, depth, perspective, "
            "bilinear, RGB565, PPM, double buffering, polygon==fan, "
-           "rectangular textures, alpha test)\n");
+           "rectangular textures, alpha test, texture env)\n");
     return 0;
 }

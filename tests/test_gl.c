@@ -825,13 +825,29 @@ static void test_quake_entry_points(struct l10gl_ctx *ctx)
     expect_int("alpha test enable ok", glGetError(), GL_NO_ERROR);
     glDisable(GL_ALPHA_TEST);
 
-    /* glTexEnvf records env mode for the Q6 modes; BLEND env is deferred. */
+    /* glTexEnvf/i push the env mode to the frontend ctx (Q6). Default is
+     * MODULATE; BLEND/GL_ADD env are deferred (Phase 8 C5/C6). */
+    expect_int("texenv default modulate", ctx->tex_env_mode,
+               L10GL_TEX_ENV_MODULATE);
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     expect_int("texenv replace accepted", glGetError(), GL_NO_ERROR);
+    expect_int("texenv replace pushed", ctx->tex_env_mode,
+               L10GL_TEX_ENV_REPLACE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL);
+    expect_int("texenvi decal accepted", glGetError(), GL_NO_ERROR);
+    expect_int("texenvi decal pushed", ctx->tex_env_mode,
+               L10GL_TEX_ENV_DECAL);
+    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    expect_int("texenv modulate pushed", ctx->tex_env_mode,
+               L10GL_TEX_ENV_MODULATE);
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_BLEND);
     expect_int("texenv blend deferred", glGetError(), GL_INVALID_ENUM);
-    glTexEnvf(0x1234, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    expect_int("texenv blend left mode", ctx->tex_env_mode,
+               L10GL_TEX_ENV_MODULATE);
+    glTexEnvf(0x1234, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     expect_int("bad texenv target", glGetError(), GL_INVALID_ENUM);
+    glTexEnvf(GL_TEXTURE_ENV, 0x1234, GL_REPLACE);
+    expect_int("bad texenv pname", glGetError(), GL_INVALID_ENUM);
 
     /* glColor3ubv converts bytes to float in [0,1] (particles). */
     glDisable(GL_TEXTURE_2D);

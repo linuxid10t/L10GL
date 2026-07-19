@@ -264,6 +264,17 @@ static int texture_bytes_per_texel(enum l10gl_tex_format format)
     return 0;
 }
 
+/* Whether the texture's base format carries an alpha channel. The texture
+ * environment equations split on this: RGB textures leave the fragment alpha
+ * untouched (the sampler reports texel alpha 1.0), RGBA textures source or
+ * blend it. */
+static int texture_has_alpha(enum l10gl_tex_format format)
+{
+    return format == L10GL_TEX_FMT_ARGB8888 ||
+           format == L10GL_TEX_FMT_ARGB1555 ||
+           format == L10GL_TEX_FMT_ARGB4444;
+}
+
 static struct swrast_color texture_texel(const struct swrast_texture *texture,
                                          int x, int y)
 {
@@ -471,10 +482,39 @@ static void swrast_draw_triangle_common(struct l10gl_ctx *ctx,
                 v = (w0 * v0.v * rw0 + w1 * v1.v * rw1 +
                      w2 * v2.v * rw2) / denom;
                 texel = texture_sample(priv, texture, u, v);
-                color.r *= texel.r;
-                color.g *= texel.g;
-                color.b *= texel.b;
-                color.a *= texel.a;
+                /* Texture environment (Q6). RGB textures (no alpha channel)
+                 * reduce every mode to its RGB equation; only RGBA textures
+                 * source or blend the alpha. */
+                switch (ctx->tex_env_mode) {
+                case L10GL_TEX_ENV_MODULATE:
+                    color.r *= texel.r;
+                    color.g *= texel.g;
+                    color.b *= texel.b;
+                    color.a *= texel.a;
+                    break;
+                case L10GL_TEX_ENV_REPLACE:
+                    color.r = texel.r;
+                    color.g = texel.g;
+                    color.b = texel.b;
+                    if (texture_has_alpha(texture->format))
+                        color.a = texel.a;
+                    break;
+                case L10GL_TEX_ENV_DECAL:
+                    if (texture_has_alpha(texture->format)) {
+                        /* RGBA: blend RGB toward the texel by its alpha,
+                         * preserve the fragment alpha. */
+                        float one_minus_ta = 1.0f - texel.a;
+                        color.r = color.r * one_minus_ta + texel.r * texel.a;
+                        color.g = color.g * one_minus_ta + texel.g * texel.a;
+                        color.b = color.b * one_minus_ta + texel.b * texel.a;
+                    } else {
+                        /* RGB: no alpha to decal with, so copy the texel. */
+                        color.r = texel.r;
+                        color.g = texel.g;
+                        color.b = texel.b;
+                    }
+                    break;
+                }
             }
 
             draw_fragment(ctx, x, y, z, color);
@@ -1062,5 +1102,5 @@ const struct l10gl_backend swrast_backend = {
     .swap_buffers           = swrast_swap_buffers,
     .caps = L10GL_CAP_GOURAUD | L10GL_CAP_ZBUFFER | L10GL_CAP_LINES |
             L10GL_CAP_TEXTURE | L10GL_CAP_BLEND | L10GL_CAP_BILINEAR |
-            L10GL_CAP_PERSPECTIVE | L10GL_CAP_ALPHA_TEST,
+            L10GL_CAP_PERSPECTIVE | L10GL_CAP_ALPHA_TEST | L10GL_CAP_TEX_ENV,
 };
