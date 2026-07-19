@@ -287,6 +287,14 @@ the no-depth-write-on-reject rule; the console-font case (text over a
 scene, transparent texels invisible, depth untouched) renders correctly in
 a pixel test.
 
+*Status (Q5, swrast gate):* DONE — `glAlphaFunc`/`GL_ALPHA_TEST` push full
+state (func + clamped ref) into the frontend ctx, swrast runs the test as
+a fragment stage before depth/blend (rejected fragments touch neither),
+the truth table pins all eight functions (`test_swrast.c`), and the
+console-font depth-untouched rule is a pixel test. DEFERRED — the ViRGE
+texture-alpha-blend approximation is a Stage 3 hardware task (Phase 8
+C6/C10 for exactness).
+
 ### Q6. Texture environment: `GL_MODULATE`, `GL_REPLACE`, `GL_DECAL`
 
 The pipeline currently hardwires modulate (vertex color × texel) in both

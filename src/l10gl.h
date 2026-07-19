@@ -254,6 +254,7 @@ struct l10gl_backend {
 #define L10GL_CAP_TRILINEAR   (1 << 6)  /* Trilinear texture filtering */
 #define L10GL_CAP_BILINEAR    (1 << 7)  /* Bilinear texture filtering */
 #define L10GL_CAP_PERSPECTIVE (1 << 8)  /* Perspective-correct texture mapping */
+#define L10GL_CAP_ALPHA_TEST (1 << 9)  /* Per-fragment alpha test */
 
 /* ========================================================================
  * Context
@@ -284,6 +285,13 @@ struct l10gl_ctx {
     enum l10gl_depth_func depth_func_val;
     int depth_test_enabled;
     int depth_writes_enabled;
+
+    /* Cached alpha-test state (Q5). swrast applies it as a fragment stage
+     * before depth and blend (rejected fragments touch neither), reusing
+     * the depth-compare function enum. ViRGE has no silicon alpha test. */
+    int alpha_test_enabled;
+    enum l10gl_depth_func alpha_func_val;
+    float alpha_ref;
 
     /* Cached blend state */
     int blend_enabled;
@@ -359,6 +367,9 @@ void l10gl_depth_func(struct l10gl_ctx *ctx, enum l10gl_depth_func func);
 void l10gl_depth_mask(struct l10gl_ctx *ctx, int enable);
 void l10gl_enable_depth_test(struct l10gl_ctx *ctx, int enable);
 void l10gl_enable_blend(struct l10gl_ctx *ctx, int enable);
+void l10gl_enable_alpha_test(struct l10gl_ctx *ctx, int enable);
+void l10gl_alpha_func(struct l10gl_ctx *ctx, enum l10gl_depth_func func,
+                      float ref);
 void l10gl_blend_func(struct l10gl_ctx *ctx,
                       enum l10gl_blend_func sfactor,
                       enum l10gl_blend_func dfactor);

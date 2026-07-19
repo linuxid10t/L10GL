@@ -803,11 +803,27 @@ static void test_quake_entry_points(struct l10gl_ctx *ctx)
     glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, m);
     expect_int("readpixels unsupported", glGetError(), GL_INVALID_OPERATION);
 
-    /* glAlphaFunc records state; GL default (ALWAYS,0) is a no-op pass. */
+    /* glAlphaFunc records state and pushes it to the frontend ctx (Q5); the
+     * GL default (ALWAYS,0) is a no-op pass. */
     glAlphaFunc(GL_GREATER, 0.666f);
     expect_int("alpha func accepted", glGetError(), GL_NO_ERROR);
+    expect_int("alpha func pushed to ctx",
+               ctx->alpha_func_val == L10GL_GREATER, 1);
+    expect_float("alpha ref clamped to ctx", ctx->alpha_ref, 0.666f);
+    glAlphaFunc(GL_LESS, -0.5f);
+    expect_float("alpha ref clamps low", ctx->alpha_ref, 0.0f);
+    glAlphaFunc(GL_GEQUAL, 2.0f);
+    expect_float("alpha ref clamps high", ctx->alpha_ref, 1.0f);
     glAlphaFunc(0x1234, 0.5f);
     expect_int("bad alpha func", glGetError(), GL_INVALID_ENUM);
+
+    /* GL_ALPHA_TEST enable toggles the frontend flag. */
+    glDisable(GL_ALPHA_TEST);
+    expect_int("alpha test disabled flag", ctx->alpha_test_enabled, 0);
+    glEnable(GL_ALPHA_TEST);
+    expect_int("alpha test enabled flag", ctx->alpha_test_enabled, 1);
+    expect_int("alpha test enable ok", glGetError(), GL_NO_ERROR);
+    glDisable(GL_ALPHA_TEST);
 
     /* glTexEnvf records env mode for the Q6 modes; BLEND env is deferred. */
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);

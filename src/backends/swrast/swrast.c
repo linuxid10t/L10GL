@@ -230,6 +230,13 @@ static void draw_fragment(struct l10gl_ctx *ctx, int x, int y, float z,
     if (x < 0 || y < 0 || x >= ctx->width || y >= ctx->height)
         return;
 
+    /* Alpha test runs before the depth test (OpenGL specification order),
+     * so a rejected fragment touches neither color nor depth. The compare
+     * reuses the depth-compare function enum (Q5). */
+    if (ctx->alpha_test_enabled &&
+        !depth_passes(ctx->alpha_func_val, color.a, ctx->alpha_ref))
+        return;
+
     depth_index = (size_t)y * (size_t)ctx->width + (size_t)x;
     if (ctx->depth_test_enabled &&
         !depth_passes(ctx->depth_func_val, z, priv->depth[depth_index]))
@@ -1055,5 +1062,5 @@ const struct l10gl_backend swrast_backend = {
     .swap_buffers           = swrast_swap_buffers,
     .caps = L10GL_CAP_GOURAUD | L10GL_CAP_ZBUFFER | L10GL_CAP_LINES |
             L10GL_CAP_TEXTURE | L10GL_CAP_BLEND | L10GL_CAP_BILINEAR |
-            L10GL_CAP_PERSPECTIVE,
+            L10GL_CAP_PERSPECTIVE | L10GL_CAP_ALPHA_TEST,
 };

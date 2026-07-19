@@ -526,6 +526,151 @@ static int test_rectangular_textures(const char *directory)
     return failed ? -1 : 0;
 }
 
+/* Render a single white fragment with the given vertex alpha under an alpha
+ * test (depth off), returning 1 if the fragment survived (pixel is bright),
+ * 0 if rejected, -1 on an infrastructure failure. */
+static int render_alpha_pixel(const char *path, enum l10gl_depth_func func,
+                              float alpha, float ref)
+{
+    struct l10gl_ctx ctx;
+    struct rgb *px;
+    int drew;
+
+    if (setenv("L10GL_SWRAST_DUMP", path, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 1, 1, 3) < 0) {
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_clear_color(&ctx, 0, 0, 0);
+    l10gl_clear_depth(&ctx, 1);
+    l10gl_clear(&ctx);
+    l10gl_enable_depth_test(&ctx, 0);
+    l10gl_enable_alpha_test(&ctx, 1);
+    l10gl_alpha_func(&ctx, func, ref);
+    l10gl_draw_triangle(&ctx,
+                        vertex(0, 0, 0, 1, 1, 1, 1, alpha, 0, 0),
+                        vertex(2, 0, 0, 1, 1, 1, 1, alpha, 0, 0),
+                        vertex(0, 2, 0, 1, 1, 1, 1, alpha, 0, 0));
+    l10gl_swap_buffers(&ctx);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+    px = read_ppm(path, 1, 1);
+    drew = px ? (px[0].r > 128) : -1;
+    free(px);
+    return drew;
+}
+
+/* Truth table for all eight alpha-test functions across A<R, A>R, A==R. */
+static int test_alpha_test_truth_table(const char *directory)
+{
+    static const struct {
+        enum l10gl_depth_func func;
+        const char *name;
+        int lt, gt, eq;  /* expected pass for A<R, A>R, A==R */
+    } cases[] = {
+        { L10GL_NEVER,    "NEVER",    0, 0, 0 },
+        { L10GL_LESS,     "LESS",     1, 0, 0 },
+        { L10GL_EQUAL,    "EQUAL",    0, 0, 1 },
+        { L10GL_LEQUAL,   "LEQUAL",   1, 0, 1 },
+        { L10GL_GREATER,  "GREATER",  0, 1, 0 },
+        { L10GL_NOTEQUAL, "NOTEQUAL", 1, 1, 0 },
+        { L10GL_GEQUAL,   "GEQUAL",   0, 1, 1 },
+        { L10GL_ALWAYS,   "ALWAYS",   1, 1, 1 },
+    };
+    char path[256];
+    char label[64];
+    int failed = 0;
+
+    snprintf(path, sizeof(path), "%s/alpha.ppm", directory);
+    for (int i = 0; i < 8; i++) {
+        int drew;
+
+        drew = render_alpha_pixel(path, cases[i].func, 0.3f, 0.7f);
+        if (drew != cases[i].lt) {
+            snprintf(label, sizeof(label), "alpha %s: A<R", cases[i].name);
+            fprintf(stderr, "test-swrast: %s expected %d got %d\n",
+                    label, cases[i].lt, drew);
+            failed = 1;
+        }
+        drew = render_alpha_pixel(path, cases[i].func, 0.7f, 0.3f);
+        if (drew != cases[i].gt) {
+            snprintf(label, sizeof(label), "alpha %s: A>R", cases[i].name);
+            fprintf(stderr, "test-swrast: %s expected %d got %d\n",
+                    label, cases[i].gt, drew);
+            failed = 1;
+        }
+        drew = render_alpha_pixel(path, cases[i].func, 0.5f, 0.5f);
+        if (drew != cases[i].eq) {
+            snprintf(label, sizeof(label), "alpha %s: A==R", cases[i].name);
+            fprintf(stderr, "test-swrast: %s expected %d got %d\n",
+                    label, cases[i].eq, drew);
+            failed = 1;
+        }
+    }
+    unlink(path);
+    return failed ? -1 : 0;
+}
+
+/* A rejected (transparent) textured fragment must write neither color nor
+ * depth: a later, further opaque fragment still renders behind it. This is
+ * the console-font case -- transparent texels leave depth untouched. */
+static int test_alpha_test_depth_untouched(const char *directory)
+{
+    static const uint32_t clear_texel[1] = { 0x00ffffff }; /* alpha 0 */
+    static const uint32_t solid_texel[1] = { 0xffffffff }; /* alpha 255 */
+    char path[256];
+    struct l10gl_texture transparent = {0}, opaque = {0};
+    struct l10gl_ctx ctx;
+    struct rgb *px;
+    int failed = 0;
+
+    snprintf(path, sizeof(path), "%s/alphadepth.ppm", directory);
+    if (setenv("L10GL_SWRAST_DUMP", path, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 1, 1, 3) < 0) {
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    l10gl_clear_color(&ctx, 0, 0, 0);
+    l10gl_clear_depth(&ctx, 1);
+    l10gl_clear(&ctx);
+    l10gl_enable_depth_test(&ctx, 1);
+    l10gl_depth_func(&ctx, L10GL_LESS);
+    l10gl_enable_alpha_test(&ctx, 1);
+    l10gl_alpha_func(&ctx, L10GL_GREATER, 0.5f);
+
+    /* A: transparent texel at z=0.5 is rejected -- writes no depth, no color. */
+    l10gl_tex_image_2d(&ctx, &transparent, 1, 1, L10GL_TEX_FMT_ARGB8888,
+                       clear_texel);
+    l10gl_bind_texture(&ctx, &transparent);
+    l10gl_draw_textured_triangle(&ctx,
+                                 vertex(0, 0, 0.5f, 1, 1, 1, 1, 1, 0, 0),
+                                 vertex(2, 0, 0.5f, 1, 1, 1, 1, 1, 0, 0),
+                                 vertex(0, 2, 0.5f, 1, 1, 1, 1, 1, 0, 0));
+    /* B: opaque texel at z=0.8 draws only if depth is still 1.0 (A clean). */
+    l10gl_tex_image_2d(&ctx, &opaque, 1, 1, L10GL_TEX_FMT_ARGB8888, solid_texel);
+    l10gl_bind_texture(&ctx, &opaque);
+    l10gl_draw_textured_triangle(&ctx,
+                                 vertex(0, 0, 0.8f, 1, 1, 1, 1, 1, 0, 0),
+                                 vertex(2, 0, 0.8f, 1, 1, 1, 1, 1, 0, 0),
+                                 vertex(0, 2, 0.8f, 1, 1, 1, 1, 1, 0, 0));
+    l10gl_swap_buffers(&ctx);
+    l10gl_destroy(&ctx);
+    unsetenv("L10GL_SWRAST_DUMP");
+
+    px = read_ppm(path, 1, 1);
+    if (!px) {
+        unlink(path);
+        return -1;
+    }
+    failed |= expect_pixel(px, 1, 0, 0, 255, 255, 255,
+                           "alpha-test depth untouched");
+    free(px);
+    unlink(path);
+    return failed ? -1 : 0;
+}
+
 int main(void)
 {
     char directory[] = "/tmp/l10gl-swrast-test.XXXXXX";
@@ -550,6 +695,8 @@ int main(void)
     failed |= test_double_buffered_swaps(directory);
     failed |= test_polygon_matches_fan(directory);
     failed |= test_rectangular_textures(directory);
+    failed |= test_alpha_test_truth_table(directory);
+    failed |= test_alpha_test_depth_untouched(directory);
 
     unlink(reference_path);
     unlink(rgb565_path);
@@ -560,6 +707,6 @@ int main(void)
     }
     printf("test-swrast: PASS (coverage, blend, depth, perspective, "
            "bilinear, RGB565, PPM, double buffering, polygon==fan, "
-           "rectangular textures)\n");
+           "rectangular textures, alpha test)\n");
     return 0;
 }

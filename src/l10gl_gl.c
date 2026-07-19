@@ -548,6 +548,9 @@ static void gl_set_enable(GLenum cap, int enable)
     case GL_DEPTH_TEST:
         l10gl_enable_depth_test(ctx, enable);
         break;
+    case GL_ALPHA_TEST:
+        l10gl_enable_alpha_test(ctx, enable);
+        break;
     case GL_BLEND:
         l10gl_enable_blend(ctx, enable);
         break;
@@ -605,6 +608,24 @@ void glCullFace(GLenum mode)
                                                L10GL_CULL_BACK);
 }
 
+/* Map a GL compare-function enum to the frontend depth-compare enum. The
+ * eight values are shared by glDepthFunc and glAlphaFunc (Q5). Returns 0
+ * and writes *out on success, -1 for an invalid enum. */
+static int gl_map_compare_func(GLenum func, enum l10gl_depth_func *out)
+{
+    switch (func) {
+    case GL_NEVER:    *out = L10GL_NEVER; return 0;
+    case GL_LESS:     *out = L10GL_LESS; return 0;
+    case GL_EQUAL:    *out = L10GL_EQUAL; return 0;
+    case GL_LEQUAL:   *out = L10GL_LEQUAL; return 0;
+    case GL_GREATER:  *out = L10GL_GREATER; return 0;
+    case GL_NOTEQUAL: *out = L10GL_NOTEQUAL; return 0;
+    case GL_GEQUAL:   *out = L10GL_GEQUAL; return 0;
+    case GL_ALWAYS:   *out = L10GL_ALWAYS; return 0;
+    default:          return -1;
+    }
+}
+
 void glDepthFunc(GLenum func)
 {
     struct l10gl_ctx *ctx = gl_current();
@@ -612,16 +633,9 @@ void glDepthFunc(GLenum func)
 
     if (!ctx)
         return;
-    switch (func) {
-    case GL_NEVER:    mapped = L10GL_NEVER; break;
-    case GL_LESS:     mapped = L10GL_LESS; break;
-    case GL_EQUAL:    mapped = L10GL_EQUAL; break;
-    case GL_LEQUAL:   mapped = L10GL_LEQUAL; break;
-    case GL_GREATER:  mapped = L10GL_GREATER; break;
-    case GL_NOTEQUAL: mapped = L10GL_NOTEQUAL; break;
-    case GL_GEQUAL:   mapped = L10GL_GEQUAL; break;
-    case GL_ALWAYS:   mapped = L10GL_ALWAYS; break;
-    default: gl_record_error(GL_INVALID_ENUM); return;
+    if (gl_map_compare_func(func, &mapped)) {
+        gl_record_error(GL_INVALID_ENUM);
+        return;
     }
     l10gl_depth_func(ctx, mapped);
 }
@@ -1244,30 +1258,19 @@ void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
 
 void glAlphaFunc(GLenum func, GLclampf ref)
 {
-    if (!gl_current())
+    struct l10gl_ctx *ctx = gl_current();
+    enum l10gl_depth_func mapped;
+
+    if (!ctx)
         return;
-    switch (func) {
-    case GL_NEVER:
-    case GL_LESS:
-    case GL_EQUAL:
-    case GL_LEQUAL:
-    case GL_GREATER:
-    case GL_NOTEQUAL:
-    case GL_GEQUAL:
-    case GL_ALWAYS:
-        break;
-    default:
+    if (gl_map_compare_func(func, &mapped)) {
         gl_record_error(GL_INVALID_ENUM);
         return;
     }
-    if (ref < 0.0f)
-        ref = 0.0f;
-    else if (ref > 1.0f)
-        ref = 1.0f;
     gl_state.alpha_func = func;
     gl_state.alpha_ref = ref;
-    /* Q5 wires alpha_func/ref into the swrast fragment stage. The GL
-     * default (ALWAYS, 0) passes every fragment, matching current behavior. */
+    /* Push to the frontend ctx so swrast's fragment stage (Q5) reads it. */
+    l10gl_alpha_func(ctx, mapped, ref);
 }
 
 void glTexEnvf(GLenum target, GLenum pname, GLfloat param)

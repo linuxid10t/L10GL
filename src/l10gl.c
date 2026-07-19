@@ -119,6 +119,9 @@ int l10gl_create(struct l10gl_ctx *ctx,
     ctx->depth_func_val = L10GL_LESS;
     ctx->depth_test_enabled = 1;
     ctx->depth_writes_enabled = 1;
+    ctx->alpha_test_enabled = 0;
+    ctx->alpha_func_val = L10GL_ALWAYS;
+    ctx->alpha_ref = 0.0f;
     ctx->blend_enabled = 0;
     ctx->blend_sfactor = L10GL_SRC_ALPHA;
     ctx->blend_dfactor = L10GL_ONE_MINUS_SRC_ALPHA;
@@ -165,7 +168,7 @@ int l10gl_create(struct l10gl_ctx *ctx,
            ctx->pixel_format.green.offset, ctx->pixel_format.green.length,
            ctx->pixel_format.blue.offset, ctx->pixel_format.blue.length,
            ctx->pixel_format.alpha.offset, ctx->pixel_format.alpha.length);
-    printf("  Caps: %s%s%s%s%s%s%s%s%s\n",
+    printf("  Caps: %s%s%s%s%s%s%s%s%s%s\n",
            ctx->backend->caps & L10GL_CAP_GOURAUD     ? "Gouraud " : "",
            ctx->backend->caps & L10GL_CAP_ZBUFFER     ? "Z-buffer " : "",
            ctx->backend->caps & L10GL_CAP_LINES       ? "Lines " : "",
@@ -174,7 +177,8 @@ int l10gl_create(struct l10gl_ctx *ctx,
            ctx->backend->caps & L10GL_CAP_DITHER      ? "Dither " : "",
            ctx->backend->caps & L10GL_CAP_BILINEAR    ? "Bilinear " : "",
            ctx->backend->caps & L10GL_CAP_TRILINEAR   ? "Trilinear " : "",
-           ctx->backend->caps & L10GL_CAP_PERSPECTIVE ? "Perspective " : "");
+           ctx->backend->caps & L10GL_CAP_PERSPECTIVE ? "Perspective " : "",
+           ctx->backend->caps & L10GL_CAP_ALPHA_TEST  ? "AlphaTest " : "");
 
     return 0;
 }
@@ -236,6 +240,21 @@ void l10gl_enable_depth_test(struct l10gl_ctx *ctx, int enable)
     ctx->depth_test_enabled = enable;
     if (ctx->backend->depth_test)
         ctx->backend->depth_test(ctx, enable);
+}
+
+/* Alpha test has no backend hook: swrast reads these ctx fields directly in
+ * its fragment stage, and ViRGE has no silicon alpha test (Q5 approximates
+ * it via texture-alpha blend in Stage 3). */
+void l10gl_enable_alpha_test(struct l10gl_ctx *ctx, int enable)
+{
+    ctx->alpha_test_enabled = enable;
+}
+
+void l10gl_alpha_func(struct l10gl_ctx *ctx, enum l10gl_depth_func func,
+                      float ref)
+{
+    ctx->alpha_func_val = func;
+    ctx->alpha_ref = ref < 0.0f ? 0.0f : (ref > 1.0f ? 1.0f : ref);
 }
 
 void l10gl_enable_blend(struct l10gl_ctx *ctx, int enable)
