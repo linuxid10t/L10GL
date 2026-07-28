@@ -475,6 +475,33 @@ final behavior and hardware gates pass. Native ViRGE state is accelerated only
 when DB019-B supports an exact mapping; unsupported state must use a tested
 software path or an honestly absent context buffer.
 
+**Q9 GLQuake port started 2026-07-28.** `L10GL-Quake` (private,
+`github.com/linuxid10t/L10GL-Quake`, forked from `id-Software/Quake` at
+`bf4ac42`) previously held only the vendored upstream import — no
+`vid_l10gl.c`/`in_l10gl.c` existed yet, confirmed by `git log`
+(single commit) and a `*l10gl*` search over the tree before this entry.
+David clarified the repo stays **private for now**, so Q9 edits the
+vendored source directly there (see `docs/QUAKE_PLAN.md`'s license-boundary
+note) instead of following a strict read-only-audit-then-reimplement
+process — the two rules that still hold are that no GPL source enters this
+MIT `L10GL` tree, and the honest pre-1.1 `GL_VERSION` string. Key discovery
+during Q9 groundwork: the GPL release already contains full `#if !id386`
+portable-C fallbacks for every asm-only symbol GLQuake's Linux build needs
+(`BoxOnPlaneSide`, `TransformVector`, `Invert24To16`, `SV_HullPointContents`,
+`SND_PaintChannelFrom8`, `Snd_WriteLinearBlastStereo16`; the DOS-only FPCW
+functions in `sys_dosa.s` are never called outside `#if id386`/`sys_dos.c`),
+and `id386` naturally evaluates to 0 under x86-64 GCC (the `#define
+__i386__ 1` in `quakedef.h` is itself gated on `_WIN32`+`_M_IX86`, i.e.
+MSVC-only). So the Linux x86-64 build needs zero of the four legacy `.s`
+files (`math.s`/`worlda.s`/`snd_mixa.s`/`sys_dosa.s`) — pure portable C,
+matching the target machine's architecture and avoiding a 32-bit toolchain
+dependency on `david-ta970`. `gl_vidlinux.c` (the SVGAlib GL variant, not
+`gl_vidlinuxglx.c`'s X11/GLX path) is the load-bearing reference for
+`vid_l10gl.c`/`in_l10gl.c`: it already does fullscreen console ownership
+without X11 and raw AT-scancode keyboard reading via K_MEDIUMRAW (its
+`scantokey[128]` table is reused verbatim). See `docs/QUAKE_PLAN.md` Q9 for
+the current build/run status.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

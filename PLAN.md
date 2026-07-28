@@ -1343,10 +1343,23 @@ measured decision on the lightmap strategy the chip can express, and a
 playable-E1M1 phase gate).
 
 GLQuake's source is GPL-2.0: per the 86Box precedent, the port lives in a
-separate repository and no GPL code enters this MIT tree — this repository
-gains only GL API features, tests, and documentation. The version string
-continues to report the honest pre-1.1 tier; running Quake does not make the
-driver OpenGL 1.1.
+separate repository (`L10GL-Quake`, a private fork of `id-Software/Quake`)
+and no GPL code enters this MIT tree — this repository gains only GL API
+features, tests, and documentation. The version string continues to report
+the honest pre-1.1 tier; running Quake does not make the driver OpenGL 1.1.
+
+**License-boundary decision, 2026-07-28 (David):** `L10GL-Quake` stays
+**private** for now, so the strict "audit read-only, out-of-tree" discipline
+used for the Q0 manifest no longer applies to the port work itself — Q9
+edits the vendored Quake source directly in that private repo (platform
+layer files, build system, and minimal portability fixes such as dropping
+the dead `<GL/glu.h>` include) rather than re-deriving everything from an
+external read-only audit. The two rules that still hold regardless of
+repo visibility: (1) no GPL code is copied into this MIT `L10GL` tree —
+`L10GL` still gains only GL API features, tests, and documentation; (2)
+`glGetString(GL_VERSION)` keeps reporting the honest pre-1.1 tier. If
+`L10GL-Quake` is ever made public, revisit whether any port-side changes
+need a distribution notice.
 
 ---
 

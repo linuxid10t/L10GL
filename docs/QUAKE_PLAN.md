@@ -50,9 +50,22 @@ else GL 1.1 requires stays in Phase 8.
   MIT. Follow the established 86Box rule (`PLAN.md` F4): run it as a
   separate program, never copy its code into this repository. The port
   (a fork of id's tree with a `vid_l10gl.c`/`in_l10gl.c`) lives in a
-  **separate repository**; this repository gains only GL API features,
-  tests, and documentation. Nothing in `libl10gl.a` may include or link
-  GPL code.
+  **separate repository**, `L10GL-Quake` (`origin` =
+  `github.com/linuxid10t/L10GL-Quake`, `upstream` =
+  `github.com/id-Software/Quake`, forked at the id GPL release commit
+  `bf4ac42`); this repository gains only GL API features, tests, and
+  documentation. Nothing in `libl10gl.a` may include or link GPL code.
+
+  **2026-07-28 (David):** `L10GL-Quake` stays private for now, so Q9 edits
+  the vendored source directly in that repo (platform-layer files, the
+  build system, small portability fixes) instead of following a strict
+  read-only-audit-then-reimplement discipline — that discipline was in
+  service of a public-distribution GPL/MIT boundary that doesn't bind a
+  private repo the same way. The two rules that don't move: no GPL source
+  enters this MIT `L10GL` tree, and the honest pre-1.1 version-string rule
+  stays in force regardless. Revisit the private/public question, and
+  whether any port-side changes need a distribution notice, if
+  `L10GL-Quake` is ever made public.
 - **Test data:** the Quake shareware episode (`pak0.pak`) is
   redistributable in unmodified form and drives all automated testing
   (`timedemo demo1`). Do not commit game data to this repository; the
@@ -415,6 +428,20 @@ on swrast without GL errors on the console; captured frames show a
 textured, lightmapped world, sky and water, alias models, particles, and
 readable HUD/console text; the reported timedemo frame total matches the
 demo's canonical frame count.
+
+*Status (Q9, started 2026-07-28):* `vid_l10gl.c` and `in_l10gl.c` exist in
+`L10GL-Quake` (`WinQuake/`) and `glquake.l10gl` **builds and links clean**
+against `libl10gl.a` on x86-64 via `WinQuake/Makefile.l10gl` (no asm
+dependency -- see that repo's `L10GL_PORT.md` for why the four legacy `.s`
+files aren't needed on this architecture). The binary **runs and executes
+real engine boot code** (cvar/cmd registration, filesystem probing) up to
+the expected `Sys_Error: couldn't load gfx.wad`, since this environment has
+no game data yet -- `VID_Init`/`l10glCreateContext` (i.e. `vid_l10gl.c`
+itself) has not executed in this environment. DEFERRED: fetching the
+shareware `pak0.pak`, a first real `L10GL_BACKEND=swrast` frame out of
+`VID_Init`, interactive keyboard/mouse exercise of `in_l10gl.c`, and the
+automated `timedemo demo1` gate script itself (belongs in this repository
+per the plan above, not yet written).
 
 ## Stage 3 — GLQuake on the ViRGE
 
