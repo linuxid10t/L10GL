@@ -502,6 +502,29 @@ without X11 and raw AT-scancode keyboard reading via K_MEDIUMRAW (its
 `scantokey[128]` table is reused verbatim). See `docs/QUAKE_PLAN.md` Q9 for
 the current build/run status.
 
+**Q9 `VID_Init` verified working end to end 2026-07-29.** Fetched the real
+shareware installer (`quake106.zip`, a mirror of the original 1996
+`ftp.idsoftware.com` tree) to get test data; its `resource.1` payload turned
+out to be a DOS self-extracting **LHA/LZH** archive (`LHA's SFX 2.13L`), not
+a plain zip — extracted with `lha`/`lhasa` (package install needed sudo,
+which this environment doesn't have; David ran `pacman -S lhasa` himself).
+`id1/pak0.pak` (18,689,235 bytes, `PACK` magic) matches the known shareware
+pak exactly. With that in place, `L10GL_BACKEND=swrast ./glquake.l10gl
+-nosound -width 320 -height 240 -bpp 16` boots all the way through:
+`l10glCreateContext` creates a real double-buffered offscreen context,
+`GL_Init` completes its full fixed-function setup, and the engine proceeds
+into `demo1.dem` (E1M3, "the Necropolis"). `L10GL_SWRAST_DUMP` frame
+captures — visually inspected after PPM→PNG conversion — show correctly
+textured 3D geometry, monsters, the first-person weapon model, and a fully
+rendered HUD/pickup-message overlay ("YOU GOT THE SHELLS", "YOU GOT THE
+GRENADE LAUNCHER"). `in_l10gl.c` degraded cleanly with no real VT/evdev
+available in this sandbox (pty rejects `KDSKBMODE` with ENOTTY; no mouse
+device) rather than crashing, and `signal_handler`'s Ctrl-C/SIGTERM path
+shut the engine down correctly under `timeout`. This is a real, hand-run
+verification, not the Q9 automated gate (still unwritten — see
+`L10GL-Quake`'s `L10GL_PORT.md` for the exact fetch/extract commands and
+full status).
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

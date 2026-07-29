@@ -429,19 +429,29 @@ textured, lightmapped world, sky and water, alias models, particles, and
 readable HUD/console text; the reported timedemo frame total matches the
 demo's canonical frame count.
 
-*Status (Q9, started 2026-07-28):* `vid_l10gl.c` and `in_l10gl.c` exist in
-`L10GL-Quake` (`WinQuake/`) and `glquake.l10gl` **builds and links clean**
-against `libl10gl.a` on x86-64 via `WinQuake/Makefile.l10gl` (no asm
-dependency -- see that repo's `L10GL_PORT.md` for why the four legacy `.s`
-files aren't needed on this architecture). The binary **runs and executes
-real engine boot code** (cvar/cmd registration, filesystem probing) up to
-the expected `Sys_Error: couldn't load gfx.wad`, since this environment has
-no game data yet -- `VID_Init`/`l10glCreateContext` (i.e. `vid_l10gl.c`
-itself) has not executed in this environment. DEFERRED: fetching the
-shareware `pak0.pak`, a first real `L10GL_BACKEND=swrast` frame out of
-`VID_Init`, interactive keyboard/mouse exercise of `in_l10gl.c`, and the
-automated `timedemo demo1` gate script itself (belongs in this repository
-per the plan above, not yet written).
+*Status (Q9, started 2026-07-28, VID_Init verified 2026-07-29):*
+`vid_l10gl.c` and `in_l10gl.c` exist in `L10GL-Quake` (`WinQuake/`) and
+`glquake.l10gl` **builds and links clean** against `libl10gl.a` on x86-64
+via `WinQuake/Makefile.l10gl` (no asm dependency -- see that repo's
+`L10GL_PORT.md` for why the four legacy `.s` files aren't needed on this
+architecture). With real shareware data in place (`quake106.zip` from an
+`ftp.idsoftware.com` mirror; its `resource.1` payload is a DOS
+self-extracting LHA archive, extracted with `lha`/`lhasa` -- see
+`L10GL_PORT.md` for the exact commands), **`VID_Init` runs end to end on
+swrast**: `l10glCreateContext` creates a real double-buffered offscreen
+context, `GL_Init`'s full fixed-function setup completes cleanly
+(`GL_VENDOR`/`GL_RENDERER`/`GL_VERSION` print correctly, `GL_EXTENSIONS` is
+honestly empty per Q1), and `L10GL_SWRAST_DUMP` frame captures of
+`demo1.dem` playback (verified visually) show correctly textured 3D
+geometry, monsters, the first-person weapon model, and a fully rendered
+HUD/pickup-message overlay. `in_l10gl.c` degrades cleanly with no real
+VT/evdev present (this class of sandbox) rather than crashing, and
+`signal_handler`'s Ctrl-C/SIGTERM path was exercised successfully. DEFERRED:
+the automated `timedemo demo1`-to-completion gate script itself (today's
+run was manual, bounded by `timeout`, not driven to the demo's actual end
+and canonical frame count -- that script belongs in this repository per
+the plan above and is not yet written), and interactive keyboard/mouse
+exercise of `in_l10gl.c` against a live VT.
 
 ## Stage 3 — GLQuake on the ViRGE
 
