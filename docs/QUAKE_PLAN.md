@@ -403,9 +403,12 @@ update per frame) no longer leak one dead image per call. `test_texture_lifetime
 drives the GL delete path on swrast and pins, via `swrast_debug_texture_count`,
 that create/delete/create cycles, repeated re-uploads, and a `glTexSubImage2D`
 storm all hold a stable allocation count (level-reload memory stability).
-DEFERRED — ViRGE still uses the bump allocator (leak-until-teardown); its
-free-list allocator (first-fit + coalescing) and the human hardware sign-off
-are Stage 3, gated behind the Q9 swrast milestone.
+The ViRGE Stage 3 portion landed with Q10: its texture heap is now a first-fit
+free-list with eight-byte allocation rounding and adjacent-block coalescing.
+Re-uploading a name releases its old allocation before replacement, and
+`tex_free` returns deleted names to the heap. The pure allocator test pins
+first-fit reuse, capacity recovery, overlap rejection, and two-sided
+coalescing. PENDING — human create/delete/reload sign-off on silicon.
 
 ### Q9. The GLQuake port and the swrast "up and running" gate
 
@@ -429,7 +432,7 @@ textured, lightmapped world, sky and water, alias models, particles, and
 readable HUD/console text; the reported timedemo frame total matches the
 demo's canonical frame count.
 
-*Status (Q9, started 2026-07-28, VID_Init verified 2026-07-29):*
+*Status (Q9, started 2026-07-28, automated gate implemented 2026-08-02):*
 `vid_l10gl.c` and `in_l10gl.c` exist in `L10GL-Quake` (`WinQuake/`) and
 `glquake.l10gl` **builds and links clean** against `libl10gl.a` on x86-64
 via `WinQuake/Makefile.l10gl` (no asm dependency -- see that repo's
@@ -446,12 +449,20 @@ honestly empty per Q1), and `L10GL_SWRAST_DUMP` frame captures of
 geometry, monsters, the first-person weapon model, and a fully rendered
 HUD/pickup-message overlay. `in_l10gl.c` degrades cleanly with no real
 VT/evdev present (this class of sandbox) rather than crashing, and
-`signal_handler`'s Ctrl-C/SIGTERM path was exercised successfully. DEFERRED:
-the automated `timedemo demo1`-to-completion gate script itself (today's
-run was manual, bounded by `timeout`, not driven to the demo's actual end
-and canonical frame count -- that script belongs in this repository per
-the plan above and is not yet written), and interactive keyboard/mouse
-exercise of `in_l10gl.c` against a live VT.
+`signal_handler`'s Ctrl-C/SIGTERM path was exercised successfully.
+`tools/quake-swrast-gate` now supplies the required repeatable integration
+run: it invokes the port's verified shareware fetcher when necessary, builds
+the port, stages only a symlink to its untracked pak data, runs
+`-nosound -noudp +timedemo demo1` at 320x240x16 with swrast PPM capture, and
+requires Quake's canonical **969-frame** result before SIGTERM cleanly ends
+its post-timedemo demo loop. Its no-data/no-network fixture is in
+`tests/test-quake-swrast-gate.sh` and runs under `make check`. **Q9 swrast
+acceptance: DONE (2026-08-02).** The real port/data run initialized
+`L10GL/swrast` at 320x240x16, completed `demo1` at the canonical 969 frames
+in 8.0 seconds (121.0 FPS), and retained 1,073 PPM presentations, including
+loading frames before the timedemo measurement. The independent live-VT
+keyboard/mouse exercise of `in_l10gl.c` remains a follow-up, but does not
+block the swrast headline milestone. Stage 3 is now unblocked.
 
 ## Stage 3 — GLQuake on the ViRGE
 
@@ -473,6 +484,48 @@ corruption). Q8's allocator makes level transitions survivable.
 *Acceptance:* format-conversion tests pin 1555/4444 packing; a VRAM
 accounting test walks a recorded shareware level's texture set and proves
 it fits the budget; human verifies texture quality on hardware.
+
+*Status (Q10, started 2026-08-02):* the shim now treats GLQuake's legacy
+component-count internal formats as the compact upload policy: `3` uploads
+ARGB1555, `4` uploads ARGB4444, and explicit `GL_RGBA4` also uploads
+ARGB4444. It deliberately retains Q4's CPU-side ARGB8888 image and packs a
+temporary 16-bit backend upload, so subimage/lightmap updates are lossless
+before quantization. `test-gl` pins the exact packed words, including the
+packed `GL_RGBA4` source shape used by GLQuake's `-lm_2` option. The Q9 swrast
+gate records every successful base-level upload in `textures.tsv`; run
+`tools/quake-vram-budget --trace <that file>` to apply the exact 640x480
+RGB555 double-buffer + Z layout, ViRGE rectangle replication, and eight-byte
+allocation alignment.
+
+**First real budget result (2026-08-02): NOT FIT.** The recorded `demo1`
+(E1M3) sequence consumed 8,934,528 bytes (8,725 KiB) while the 4 MiB target
+has only 2,351,104 bytes (2,296 KiB) after color and depth buffers — an
+overrun of 6,583,424 bytes. The trace contains 153 successful base-level
+uploads, including 24 256x256 and 12 256x128 ARGB1555 allocations after
+ViRGE's square replication. The gate passed `+gl_max_size 256`, but that
+console command is processed too late to constrain all bootstrap uploads;
+the trace is the proof. Do not begin Q11. Next Q10 work is to make the 256
+cap effective before GL initialization (or establish a safe residency/eviction
+policy), re-record the trace, and then publish the level-fit/OOM result.
+
+**Debugging resolution (2026-08-02): FIT.** The lifetime-aware trace added GL
+names, deletes, and subimage replacement events. It proved the first result
+was not mainly re-upload leakage: 188 events collapsed to 151 genuinely live
+objects, still using 8,672,384 bytes. Asset labels then identified rounded-up
+alias-model skins as the dominant allocations; fixed 128x128 lightmap atlases
+were only 416 KiB. The private port now sets `gl_max_size 256` and
+`gl_picmip 2` as startup defaults before `Draw_Init`, rather than relying on
+late `+` commands. `gl_picmip` is deliberately limited to mipmapped
+world/model assets: applying it globally fit with more margin but reduced 8x8
+charset glyphs to unreadable 2x2 blocks. The visually inspected final swrast
+rerun kept the fixed UI atlases readable, completed canonical 969-frame
+`demo1`, and peaked at **2,196,416 bytes (2,144 KiB), leaving 154,688 bytes**
+in the 2,351,104-byte synchronized texture heap. The ViRGE free-list described
+in Q8 now makes the 37 recorded replacement uploads reuse storage rather than
+burn the remaining margin. Automated format, allocator, trace-lifetime,
+first-fit fragmentation, and real level-fit gates are green. PENDING — human
+texture-quality sign-off on ViRGE; Q11 remains hardware-gated until that
+check.
 
 ### Q11. First hardware run: fullbright world
 

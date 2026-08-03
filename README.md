@@ -235,6 +235,44 @@ Phase 4 GL-to-L10GL state/matrix/immediate-mode mappings, and the
 requested-versus-actual display-mode contract (including padded stride and
 RGB555/RGB565/RGB888 channel layouts).
 
+### GLQuake swrast acceptance gate
+
+Phase 7's Q9 gate builds the sibling private `L10GL-Quake` port, fetches the
+untracked redistributable shareware data when needed, and runs `timedemo demo1`
+through the offscreen swrast backend. It verifies the canonical **969-frame**
+result and keeps the log plus PPM capture sequence in a fresh ignored results
+directory (roughly 220 MiB at the default 320x240 capture size):
+
+```sh
+tools/quake-swrast-gate
+```
+
+The command never copies Quake source or game data into this repository. It
+stages a symlink to `pak0.pak` in the results directory, so GLQuake's generated
+configuration also stays there. Use `--quake-dir`, `--output-dir`,
+`--skip-fetch`, `--skip-build`, or `--timeout` to control a local run; the
+script's `--help` documents each option. The lightweight fixture runs as part
+of `make check`; the actual gate is intentionally an explicit integration run
+because it downloads shareware data and creates the capture artifacts.
+
+For the 4 MiB ViRGE/DX, the private GLQuake port starts with
+`gl_max_size 256` and `gl_picmip 2`. This policy must be active before
+`Draw_Init`; command-line `+` commands arrive too late for bootstrap textures.
+The mip reduction applies only to mipmapped world/model assets, keeping the
+charset, HUD scraps, and other fixed UI textures readable. The recorded
+shareware `demo1`/E1M3 set peaks at 2,196,416 texture bytes, leaving 154,688
+bytes after 640x480 RGB555 double buffers and 16-bit Z. Inspect any gate run
+with:
+
+```sh
+tools/quake-vram-budget --trace /path/to/results/textures.tsv
+```
+
+The ViRGE allocator uses first-fit reuse and coalescing, so dynamic lightmap
+re-uploads replace their old storage. If no block is large enough it prints
+the requested and total free byte counts; `glTexImage2D` reports
+`GL_OUT_OF_MEMORY` and does not write beyond detected VRAM.
+
 ### Software rendering and frame dumps
 
 Force offscreen swrast, render a bounded sequence, and write one PPM per frame:

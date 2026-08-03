@@ -502,7 +502,8 @@ without X11 and raw AT-scancode keyboard reading via K_MEDIUMRAW (its
 `scantokey[128]` table is reused verbatim). See `docs/QUAKE_PLAN.md` Q9 for
 the current build/run status.
 
-**Q9 `VID_Init` verified working end to end 2026-07-29.** Fetched the real
+**Q9 `VID_Init` verified working end to end 2026-07-29; swrast headline gate
+closed 2026-08-02.** Fetched the real
 shareware installer (`quake106.zip`, a mirror of the original 1996
 `ftp.idsoftware.com` tree) to get test data; its `resource.1` payload turned
 out to be a DOS self-extracting **LHA/LZH** archive (`LHA's SFX 2.13L`), not
@@ -521,9 +522,31 @@ GRENADE LAUNCHER"). `in_l10gl.c` degraded cleanly with no real VT/evdev
 available in this sandbox (pty rejects `KDSKBMODE` with ENOTTY; no mouse
 device) rather than crashing, and `signal_handler`'s Ctrl-C/SIGTERM path
 shut the engine down correctly under `timeout`. This is a real, hand-run
-verification, not the Q9 automated gate (still unwritten — see
-`L10GL-Quake`'s `L10GL_PORT.md` for the exact fetch/extract commands and
-full status).
+verification, not the Q9 automated gate at that time. The gate now lives in
+`tools/quake-swrast-gate`: it uses the port's verified fetcher, stages the
+pak as a symlink under an ignored result directory, captures swrast PPM
+frames, parses Quake's timedemo summary, and requires the canonical **969**
+frames before SIGTERM exercises normal teardown. The real run completed in
+8.0 seconds at 121.0 FPS and retained 1,073 presentations; its no-data
+lifecycle fixture runs as part of `make check`. Q9's swrast acceptance is
+therefore closed. Live-VT keyboard/mouse exercise remains a separate
+follow-up; Stage 3/Q10 is unblocked.
+
+**Q10 texture-budget debugging closed 2026-08-02.** A lifetime-aware upload
+trace showed 151 live textures using 8,672,384 bytes, so repeated uploads were
+not the main cause of the original 8.9 MiB cumulative result. Optional engine
+labels identified power-of-two-rounded alias-model skins as the dominant
+ViRGE square allocations. Moving `gl_max_size 256` and `gl_picmip 2` into the
+private port's pre-`Draw_Init` defaults produced a canonical 969-frame
+`demo1` run. The reduction applies only to mipmapped world/model assets;
+applying it to fixed UI atlases made charset glyphs unreadable. The final
+visually inspected swrast frame keeps HUD text readable, while exact 4 MiB
+ViRGE accounting peaks at 2,196,416 bytes and leaves 154,688 bytes. The ViRGE
+backend now uses an eight-byte-aligned, first-fit free-list with adjacent-block
+coalescing; delete and replacement uploads reclaim their blocks, and OOM
+reports requested plus total free bytes without writing VRAM. Automated
+format, lifetime, allocator, fragmentation, and level-fit gates pass; human
+texture-quality and allocator sign-off on silicon remain.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
