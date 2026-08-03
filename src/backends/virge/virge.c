@@ -998,30 +998,104 @@ static void *map_bar0(struct l10gl_pci_device *dev, size_t *size_out)
  * Engine Synchronization
  * ======================================================================== */
 
-void virge_wait_engine(struct virge_ctx *ctx)
+#define VIRGE_ENGINE_WAIT_TIMEOUT_NS 1000000000ull
+#define VIRGE_ENGINE_WAIT_CLOCK_MASK 0xffu
+
+static void virge_invalidate_engine_state(struct virge_ctx *ctx)
 {
-    while (!(virge_read32(ctx, VIRGE_SUBSYS_STATUS) & VIRGE_STATUS_3DIDLE))
-        ;
+    ctx->state_2d.valid_mask = 0;
+    ctx->state_3d.valid_mask = 0;
+    ctx->state_3d_cmd.valid_mask = 0;
+    ctx->state_3d_attr.valid_mask = 0;
+    ctx->state_3d_tex.valid_mask = 0;
+    ctx->state_3d_geom.valid_mask = 0;
 }
 
-void virge_wait_fifo(struct virge_ctx *ctx, unsigned slots)
+static void virge_recover_engine_timeout(struct virge_ctx *ctx,
+                                         const char *wait_kind,
+                                         const char *where,
+                                         unsigned requested_slots,
+                                         uint32_t status)
 {
+    fprintf(stderr,
+            "S3 ViRGE: %s timed out after 1000ms in %s: "
+            "SUBSYS_STATUS=0x%08x (idle=%u fifo_free=%u need=%u), "
+            "FB=0x%x TEX_BASE=0x%x TEX_CMD=0x%08x; resetting S3d engine\n",
+            wait_kind, where ? where : "<unknown>", status,
+            !!(status & VIRGE_STATUS_3DIDLE),
+            virge_fifo_slots_free(status), requested_slots,
+            ctx->fb_base, ctx->tex_base, ctx->tex_cmd_bits);
+
+    /* MM8504 is status on read and Subsystem Control on write. DB019-B
+     * sec.22 (PDF pp.299-301) specifies 10b as S3d reset and 01b as enable;
+     * this is the same sequence used during virge_init. A reset discards the
+     * hardware register image, so every software cache must be invalidated. */
+    virge_write32(ctx, VIRGE_SUBSYS_CONTROL, VIRGE_SSC_S3D_RESET);
+    virge_write32(ctx, VIRGE_SUBSYS_CONTROL, VIRGE_SSC_S3D_ENABLE);
+    virge_invalidate_engine_state(ctx);
+    ctx->engine_recoveries++;
+
+    status = virge_read32(ctx, VIRGE_SUBSYS_STATUS);
+    fprintf(stderr,
+            "S3 ViRGE: post-reset SUBSYS_STATUS=0x%08x "
+            "(idle=%u fifo_free=%u, recovery #%u)\n",
+            status, !!(status & VIRGE_STATUS_3DIDLE),
+            virge_fifo_slots_free(status), ctx->engine_recoveries);
+}
+
+void virge_wait_engine_at(struct virge_ctx *ctx, const char *where)
+{
+    uint64_t deadline = virge_monotonic_ns() + VIRGE_ENGINE_WAIT_TIMEOUT_NS;
+    unsigned polls = 0;
+    uint32_t status;
+
+    for (;;) {
+        status = virge_read32(ctx, VIRGE_SUBSYS_STATUS);
+        if (status & VIRGE_STATUS_3DIDLE)
+            return;
+        if ((++polls & VIRGE_ENGINE_WAIT_CLOCK_MASK) != 0)
+            continue;
+        if (virge_monotonic_ns() >= deadline) {
+            virge_recover_engine_timeout(ctx, "wait_engine", where, 0,
+                                         status);
+            return;
+        }
+    }
+}
+
+int virge_wait_fifo_at(struct virge_ctx *ctx, unsigned slots,
+                       const char *where)
+{
+    uint64_t deadline;
+    unsigned polls = 0;
+    uint32_t status;
+
     /* Every S3d MMIO register write travels through this FIFO.  MM8504
      * bits 12-8 expose its free-slot count and the FIFO is 16 entries deep
      * (DB019-B sec.15.3 and sec.22, absolute PDF pp.108 and 300).  Waiting
      * only for the space a bounded write group needs lets CPU setup overlap
      * an earlier primitive's rasterization. */
     if (slots == 0)
-        return;
+        return 0;
     if (slots > VIRGE_FIFO_DEPTH) {
         fprintf(stderr,
                 "S3 ViRGE: internal error: requested %u FIFO slots (max %u)\n",
                 slots, VIRGE_FIFO_DEPTH);
         abort();
     }
-    while (virge_fifo_slots_free(
-               virge_read32(ctx, VIRGE_SUBSYS_STATUS)) < slots)
-        ;
+    deadline = virge_monotonic_ns() + VIRGE_ENGINE_WAIT_TIMEOUT_NS;
+    for (;;) {
+        status = virge_read32(ctx, VIRGE_SUBSYS_STATUS);
+        if (virge_fifo_slots_free(status) >= slots)
+            return 0;
+        if ((++polls & VIRGE_ENGINE_WAIT_CLOCK_MASK) != 0)
+            continue;
+        if (virge_monotonic_ns() >= deadline) {
+            virge_recover_engine_timeout(ctx, "wait_fifo", where, slots,
+                                         status);
+            return -ETIMEDOUT;
+        }
+    }
 }
 
 void virge_wait_vsync(struct virge_ctx *ctx)
@@ -1301,7 +1375,14 @@ static void emit_cached_state(struct virge_ctx *ctx,
 
     /* Reserve cache misses and the caller's immediately-following dynamic
      * writes as one group.  Every caller is statically bounded to <=16. */
-    virge_wait_fifo(ctx, dirty_count + trailing_writes);
+    if (virge_wait_fifo(ctx, dirty_count + trailing_writes) < 0) {
+        /* The timeout recovery resets the hardware and invalidates every
+         * software cache. Recompute this group as a complete register image;
+         * using the pre-reset dirty mask would omit values the reset erased. */
+        dirty = (1u << count) - 1u;
+        dirty_count = count;
+        virge_wait_fifo(ctx, dirty_count + trailing_writes);
+    }
     emit_cached_state_mask(ctx, cache, offset, desired, count, dirty,
                            considered, emitted);
 }
@@ -2726,6 +2807,11 @@ int virge_init(struct virge_ctx *ctx, int width, int height, int bpp)
 void virge_cleanup(struct virge_ctx *ctx)
 {
     virge_wait_engine(ctx);
+
+    if (ctx->engine_recoveries)
+        fprintf(stderr, "S3 ViRGE: recovered %u engine wait timeout%s\n",
+                ctx->engine_recoveries,
+                ctx->engine_recoveries == 1 ? "" : "s");
 
     if (ctx->state_2d_considered || ctx->state_3d_considered ||
         ctx->state_3d_cmd_considered || ctx->state_3d_dynamic_considered) {

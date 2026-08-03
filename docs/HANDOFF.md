@@ -548,6 +548,18 @@ reports requested plus total free bytes without writing VRAM. Automated
 format, lifetime, allocator, fragmentation, and level-fit gates pass; human
 texture-quality and allocator sign-off on silicon remain.
 
+**First Q11 ViRGE run stalled 2026-08-03.** Hardware selection, 4 MiB strap
+decode, 640x480@60 native modeset/readback, synchronized buffer layout, GL
+initialization, and E1M3 model loading all succeeded, with no reported texture
+OOM. The log stopped after the last model-mesh messages and before a timedemo
+frame result. This exposed two remaining unbounded hardware polls:
+`virge_wait_engine` and `virge_wait_fifo`. They now use one-second deadlines;
+a timeout identifies the calling function, prints SUBSYS_STATUS/FIFO plus
+framebuffer/texture state, resets and re-enables S3d using DB019-B sec.22,
+and invalidates all software register caches so a complete image is emitted
+after recovery. The immediate rerun is diagnostic: retain the first timeout
+line verbatim before attempting any feature isolation.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

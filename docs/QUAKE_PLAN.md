@@ -539,6 +539,21 @@ from the lightmap-blending question.
 no register-level hangs across a full `timedemo demo1`; Ctrl-C and normal
 exit both restore the console; FPS recorded as the hardware baseline.
 
+*First silicon attempt (2026-08-03): DIAGNOSTIC REQUIRED.* The ViRGE/DX
+(device 8a01) was selected correctly, detected 4 MiB, applied and read back
+the proven 640x480@60 RGB555 native image, initialized the synchronized
+double-buffer/Z layout, and completed GL plus E1M3 model loading without a
+texture OOM. Execution then stopped before the first timedemo result, after
+the final visible model-mesh messages. The driver still had unbounded
+`virge_wait_engine` and `virge_wait_fifo` spin loops, so a wedged loading-frame
+command produced no location or status report and could also trap cleanup.
+Those polls are now bounded at one second: timeout output names the calling
+function, dumps SUBSYS_STATUS/FIFO and active framebuffer/texture state, then
+uses the documented S3d reset/enable sequence and invalidates every register
+cache. The rerun must capture that first timeout line before changing any
+render state; it distinguishes upload, FIFO submission, page-flip, and cleanup
+stalls.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE

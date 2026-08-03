@@ -693,6 +693,7 @@ struct virge_ctx {
     uint64_t state_3d_dynamic_emitted;
     int      autoexec_enabled; /* 1 = B57C kick; 0 = legacy B500 kick */
     int      tri_reuse_enabled; /* 1 = reuse identical adjacent parameters */
+    unsigned engine_recoveries; /* bounded-wait timeouts recovered by reset */
 
     /* Cached CMD_SET Z-buffering bits for the 3D triangle paths:
      * ZB mode [25-24], Z compare code [22-20], Z update [23]. Built by
@@ -829,17 +830,24 @@ uint32_t virge_autoexec_disable_command(void);
 void virge_cleanup(struct virge_ctx *ctx);
 
 /*
- * virge_wait_engine - Block until the S3d Engine is idle.
+ * virge_wait_engine_at - Block until the S3d Engine is idle.
  *
- * Polls the subsystem status register (bit 13) until the engine
- * is not busy.
+ * Polls the subsystem status register (bit 13) with a bounded deadline.
+ * A wedged command is diagnosed with the calling function and recovered by
+ * the documented S3d reset/enable sequence so cleanup can still restore the
+ * console. Callers use the macro to retain the wait site in hardware logs.
  */
-void virge_wait_engine(struct virge_ctx *ctx);
+void virge_wait_engine_at(struct virge_ctx *ctx, const char *where);
+#define virge_wait_engine(ctx) virge_wait_engine_at((ctx), __func__)
 
 /* Wait until at least @slots entries are free in the S3d FIFO.  Drawing
  * paths use this instead of waiting for full engine idle, allowing setup for
- * the next primitive to overlap rasterization of the previous one. */
-void virge_wait_fifo(struct virge_ctx *ctx, unsigned slots);
+ * the next primitive to overlap rasterization of the previous one. The wait
+ * site is recorded if the bounded poll has to reset a wedged engine. */
+int virge_wait_fifo_at(struct virge_ctx *ctx, unsigned slots,
+                       const char *where);
+#define virge_wait_fifo(ctx, slots) \
+    virge_wait_fifo_at((ctx), (slots), __func__)
 
 /*
  * virge_wait_vsync - Block until vertical retrace.
