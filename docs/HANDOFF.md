@@ -560,6 +560,19 @@ and invalidates all software register caches so a complete image is emitted
 after recovery. The immediate rerun is diagnostic: retain the first timeout
 line verbatim before attempting any feature isolation.
 
+The bounded-wait rerun reached the actual demo, showing an untextured weapon
+and a garbled frame, then repeatedly timed out in `emit_cached_state`: a prior
+textured command stayed busy while only 6-8 FIFO slots became free and the
+next full state image needed 14. The failures covered several valid texture
+bases and dimensions, so allocation and a single bad texture are excluded.
+The remaining common cause was the model-space pipeline: it clipped only the
+near plane and relied on ViRGE hardware X/Y clipping even though HC is kept
+off after the clip-register silicon failures. X3 now clips triangles against
+all six homogeneous frustum planes before projection. Capture tests cover
+near/far and all four side crossings and prove every emitted coordinate stays
+inside the viewport. This correction is pushed for a silicon rerun; Q11 is
+still open until that run completes without the first FIFO timeout.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.
@@ -664,16 +677,17 @@ the top-left framebuffer Y conversion. `test-pipeline` uses a capture backend
 to verify exact calls and vertices. X6 now exercises this path in both primary
 cube demos.
 
-Phase 2 X3 is complete as of 2026-07-17. Immediate-mode triangles are clipped
-in homogeneous space against `Z + W >= 0` before perspective division and
-culling. A crossing triangle emits one or two triangles with interpolated
-clip coordinates, color/alpha, normal, and UV. Near-boundary snapping prevents
-floating-point slivers, and projected triangles taller than 2047 scanlines are
-rejected before they reach the ViRGE's 11-bit count fields. `test-pipeline`
-covers one/two/all-outside cases, analytic intersections and interpolation,
-the exact near boundary, shared fan vertices, conservative far/line rejection,
-and both sides of the scan-height limit. X/Y still use the hardware clip
-rectangle; far-plane and line clipping remain future work.
+Phase 2 X3 was completed for the near plane on 2026-07-17 and expanded to the
+full frustum on 2026-08-03 after GLQuake exposed the disabled ViRGE hardware
+clip path. Immediate-mode triangles are clipped in homogeneous space against
+`-W <= X,Y,Z <= W` before perspective division and culling. A crossing
+triangle emits a bounded fan with interpolated clip coordinates, color/alpha,
+normal, and UV. Plane-boundary snapping prevents floating-point slivers, and
+projected triangles taller than 2047 scanlines are rejected before they reach
+the ViRGE's 11-bit count fields. `test-pipeline` covers near/far and all four
+side crossings, analytic intersections and interpolation, exact boundaries,
+shared fan vertices, conservative line rejection, viewport bounds, and both
+sides of the scan-height limit. Dedicated line clipping remains future work.
 
 Phase 2 X4 is complete as of 2026-07-17. The immediate-mode frontend now has
 opt-in per-vertex material lighting with one eye-space directional light plus
@@ -690,10 +704,10 @@ unchanged at the X4 landing; X6 now consumes this lighting path in `cube`.
 Phase 2 X5 is complete as of 2026-07-18. The immediate-mode projection path
 now emits reciprocal homogeneous clip W. Under L10GL's standard perspective
 matrices this is reciprocal positive eye-space depth; orthographic W remains
-1. X3-generated near-plane vertices interpolate clip W before X5 takes its
+1. X3-generated frustum-plane vertices interpolate clip W before X5 takes its
 reciprocal, avoiding the incorrect interpolation of already-reciprocal values.
 `test-pipeline` verifies exact W at eye depths 2/4/5, MODELVIEW-translated
-depth, constant orthographic W, textured dispatch, and near-plane
+depth, constant orthographic W, textured dispatch, and clipped
 intersections. The raw screen-space API and all backend code remain unchanged;
 X6 now uses this generated W in `textured_cube`.
 

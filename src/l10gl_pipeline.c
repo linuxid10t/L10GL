@@ -26,7 +26,26 @@ struct clip_vertex {
     float u, v;
 };
 
+#define L10GL_MAX_CLIPPED_VERTICES 12
 #define L10GL_MAX_TRIANGLE_SCANLINES 2047.0f
+
+struct clip_plane {
+    int axis;
+    float sign;
+};
+
+/* OpenGL's homogeneous clip volume is -W <= X,Y,Z <= W.  Keep the near
+ * plane first so its established fan order remains stable for callers and
+ * tests; clipping a triangle against all six planes can produce at most nine
+ * vertices, with a little defensive headroom in the fixed buffers. */
+static const struct clip_plane frustum_planes[] = {
+    { 2,  1.0f },           /* near:   Z + W >= 0 */
+    { 2, -1.0f },           /* far:   -Z + W >= 0 */
+    { 0,  1.0f },           /* left:   X + W >= 0 */
+    { 0, -1.0f },           /* right: -X + W >= 0 */
+    { 1,  1.0f },           /* bottom: Y + W >= 0 */
+    { 1, -1.0f },           /* top:   -Y + W >= 0 */
+};
 
 void l10gl_pipeline_init(struct l10gl_ctx *ctx)
 {
@@ -114,50 +133,68 @@ static void interpolate_clip_vertex(struct clip_vertex *output,
 #undef INTERPOLATE
 }
 
-static double near_distance(const struct clip_vertex *vertex)
+static double clip_plane_distance(const struct clip_vertex *vertex,
+                                  const struct clip_plane *plane)
 {
-    return (double)vertex->clip[2] + vertex->clip[3];
-}
-
-static void snap_near_plane(struct clip_vertex *vertex)
-{
-    double distance = near_distance(vertex);
+    double coordinate = vertex->clip[plane->axis];
+    double distance = (double)vertex->clip[3] + plane->sign * coordinate;
     double scale = fmax(1.0, fabs((double)vertex->clip[3]));
 
-    if (fabs(distance) <= scale * 1.0e-6)
-        vertex->clip[2] = -vertex->clip[3];
+    scale = fmax(scale, fabs(coordinate));
+    return fabs(distance) <= scale * 1.0e-6 ? 0.0 : distance;
 }
 
-/* Sutherland-Hodgman clipping against the OpenGL near plane Z + W >= 0.
- * A triangle produces zero, three, or four vertices. */
-static int clip_triangle_near(const struct clip_vertex input[3],
-                              struct clip_vertex output[4])
+static void snap_clip_plane(struct clip_vertex *vertex,
+                            const struct clip_plane *plane)
 {
-    const struct clip_vertex *previous = &input[2];
-    double previous_distance = near_distance(previous);
-    int previous_inside = previous_distance >= 0.0;
+    vertex->clip[plane->axis] = -vertex->clip[3] / plane->sign;
+}
+
+/* One Sutherland-Hodgman pass against a homogeneous frustum plane. */
+static int clip_polygon_plane(const struct clip_vertex *input, int input_count,
+                              struct clip_vertex *output,
+                              const struct clip_plane *plane)
+{
+    const struct clip_vertex *previous;
+    double previous_distance;
+    int previous_inside;
     int count = 0;
 
-    for (int i = 0; i < 3; i++) {
+    if (input_count <= 0)
+        return 0;
+    previous = &input[input_count - 1];
+    previous_distance = clip_plane_distance(previous, plane);
+    previous_inside = previous_distance >= 0.0;
+
+    for (int i = 0; i < input_count; i++) {
         const struct clip_vertex *current = &input[i];
-        double current_distance = near_distance(current);
+        double current_distance = clip_plane_distance(current, plane);
         int current_inside = current_distance >= 0.0;
 
-        if (previous_inside != current_inside) {
+        /* A boundary endpoint is itself the intersection and is copied once
+         * by the inside case. Avoid emitting a duplicate zero-area vertex. */
+        if (previous_inside != current_inside &&
+            previous_distance != 0.0 && current_distance != 0.0) {
             double denominator = previous_distance - current_distance;
             float t = (float)(previous_distance / denominator);
 
             if (t < 0.0f) t = 0.0f;
             if (t > 1.0f) t = 1.0f;
+            if (count >= L10GL_MAX_CLIPPED_VERTICES)
+                return 0;
             interpolate_clip_vertex(&output[count], previous, current, t);
-            /* Make the generated vertex exactly satisfy the plane despite
-             * floating-point interpolation error, so near depth maps to the
-             * configured depth-range endpoint rather than slightly outside. */
-            output[count].clip[2] = -output[count].clip[3];
+            /* Make generated vertices exactly satisfy the plane despite
+             * floating-point interpolation error. */
+            snap_clip_plane(&output[count], plane);
             count++;
         }
-        if (current_inside)
+        if (current_inside) {
+            if (count >= L10GL_MAX_CLIPPED_VERTICES)
+                return 0;
             output[count++] = *current;
+            if (current_distance == 0.0)
+                snap_clip_plane(&output[count - 1], plane);
+        }
 
         previous = current;
         previous_distance = current_distance;
@@ -172,18 +209,18 @@ static int project_clip_vertex(const struct l10gl_ctx *ctx,
 {
     float ndc[3];
     float window[3];
-    float z_slop;
+    float slop;
 
     if (!(input->clip[3] > 1.0e-20f))
         return 0;
 
-    /* Near crossings have already been clipped. Far-plane clipping is not in
-     * X3's one-plane scope, so retain conservative whole-primitive rejection
-     * rather than sending out-of-range Z to vintage hardware. */
-    z_slop = input->clip[3] * 1.0e-6f;
-    if (input->clip[2] < -input->clip[3] - z_slop ||
-        input->clip[2] > input->clip[3] + z_slop)
-        return 0;
+    /* Triangles have already been clipped. This check also gives unclipped
+     * lines conservative whole-segment rejection on every frustum plane. */
+    slop = input->clip[3] * 1.0e-6f;
+    for (int i = 0; i < 3; i++)
+        if (input->clip[i] < -input->clip[3] - slop ||
+            input->clip[i] > input->clip[3] + slop)
+            return 0;
 
     ndc[0] = input->clip[0] / input->clip[3];
     ndc[1] = input->clip[1] / input->clip[3];
@@ -221,8 +258,7 @@ static int triangle_exceeds_scan_limit(const struct projected_vertex *v0,
     float scanlines = ceilf(max_y) - floorf(min_y);
 
     /* ViRGE triangle scan counts are 11-bit fields (virge.h:296). Rejecting
-     * an oversized projected primitive is conservative and backend-neutral;
-     * X/Y clipping itself remains in the hardware clip rectangle. */
+     * an oversized projected primitive is conservative and backend-neutral. */
     return !isfinite(scanlines) ||
            scanlines > L10GL_MAX_TRIANGLE_SCANLINES;
 }
@@ -251,27 +287,32 @@ static void emit_triangle(struct l10gl_ctx *ctx,
                           const struct l10gl_immediate_vertex *b,
                           const struct l10gl_immediate_vertex *c)
 {
-    struct clip_vertex input[3];
-    struct clip_vertex clipped[4];
-    struct projected_vertex projected[4];
+    struct clip_vertex clipped[2][L10GL_MAX_CLIPPED_VERTICES];
+    struct projected_vertex projected[L10GL_MAX_CLIPPED_VERTICES];
+    int source = 0;
     int count;
 
-    if (!capture_clip_vertex(ctx, a, &input[0]) ||
-        !capture_clip_vertex(ctx, b, &input[1]) ||
-        !capture_clip_vertex(ctx, c, &input[2]))
+    if (!capture_clip_vertex(ctx, a, &clipped[0][0]) ||
+        !capture_clip_vertex(ctx, b, &clipped[0][1]) ||
+        !capture_clip_vertex(ctx, c, &clipped[0][2]))
         return;
-    for (int i = 0; i < 3; i++)
-        snap_near_plane(&input[i]);
-    count = clip_triangle_near(input, clipped);
-    if (count < 3)
-        return;
+    count = 3;
+    for (unsigned i = 0;
+         i < sizeof(frustum_planes) / sizeof(frustum_planes[0]); i++) {
+        count = clip_polygon_plane(clipped[source], count,
+                                   clipped[1 - source],
+                                   &frustum_planes[i]);
+        source = 1 - source;
+        if (count < 3)
+            return;
+    }
     for (int i = 0; i < count; i++)
-        if (!project_clip_vertex(ctx, &clipped[i], &projected[i]))
+        if (!project_clip_vertex(ctx, &clipped[source][i], &projected[i]))
             return;
 
     if (ctx->flat_shading) {
         /* Preserve the final submitted vertex as the provoking color even
-         * when near-plane clipping creates replacement vertices. */
+         * when clipping creates replacement vertices. */
         for (int i = 0; i < count; i++) {
             projected[i].screen.r = c->r;
             projected[i].screen.g = c->g;
@@ -280,7 +321,7 @@ static void emit_triangle(struct l10gl_ctx *ctx,
         }
     }
 
-    /* A clipped quad is triangulated as a fan, preserving polygon winding and
+    /* A clipped polygon is triangulated as a fan, preserving winding and
      * shared-edge attribute identity. */
     for (int i = 1; i + 1 < count; i++) {
         if (triangle_is_culled(ctx, &projected[0], &projected[i],
@@ -310,8 +351,8 @@ static void emit_line(struct l10gl_ctx *ctx,
     struct clip_vertex clipped[2];
     struct projected_vertex projected[2];
 
-    /* X3 clips triangles. Lines retain X2's conservative whole-segment depth
-     * rejection until a dedicated line-clipping pass is added. */
+    /* Lines retain conservative whole-segment frustum rejection until a
+     * dedicated line-clipping pass is added. */
     if (!capture_clip_vertex(ctx, a, &clipped[0]) ||
         !capture_clip_vertex(ctx, b, &clipped[1]) ||
         !project_clip_vertex(ctx, &clipped[0], &projected[0]) ||

@@ -59,7 +59,7 @@ When lighting is disabled (the default), current color and alpha are copied
 unchanged. When lighting is enabled, the current normal and material are
 evaluated as each vertex is submitted, so later state changes do not affect
 earlier vertices. Color, alpha, normal, and UV are interpolated when X3 creates
-near-plane intersection vertices.
+frustum-plane intersection vertices.
 
 Binding a non-NULL texture with `l10gl_bind_texture()` selects textured
 triangle dispatch. Binding NULL returns to Gouraud triangle dispatch. A backend
@@ -121,23 +121,23 @@ Degenerate zero-area triangles are discarded. Lines are not culled.
 
 ## Clipping and current limits
 
-X3 clips assembled triangles against the OpenGL homogeneous near plane,
-`Z + W >= 0`, before perspective division and culling. Sutherland-Hodgman
-clipping produces zero, one, or two triangles from each input triangle. New
-vertices interpolate clip coordinates, color, alpha, normal, and UV; a vertex
-within a small relative epsilon of the plane is snapped onto it to avoid a
-numerical sliver. A clipped quad is triangulated as a fan, preserving its
-shared vertices.
+X3 clips assembled triangles against all six OpenGL homogeneous frustum
+planes, `-W <= X,Y,Z <= W`, before perspective division and culling.
+Sutherland-Hodgman clipping produces a convex polygon of up to nine vertices,
+which is triangulated as a fan. New vertices interpolate clip coordinates,
+color, alpha, normal, and UV; a vertex within a small relative epsilon of a
+plane is snapped onto it to avoid a numerical sliver. Shared fan vertices
+remain identical.
 
-X/Y are left to the backend's existing clip rectangle. After viewport
-transformation, triangles spanning more than 2047 scanlines are rejected
-before dispatch because the ViRGE command field is only 11 bits.
+Software side clipping is required by the ViRGE path: its 3D hardware-clip bit
+is intentionally disabled because silicon testing found that register path
+unusable. After viewport transformation, triangles spanning more than 2047
+scanlines are still rejected before dispatch because the ViRGE command field
+is only 11 bits.
 
-Far-plane clipping is not implemented yet: a triangle crossing `Z - W = 0`
-is rejected whole. Lines are not clipped and likewise use conservative
-whole-segment depth rejection. These restrictions keep invalid coordinates
-away from vintage hardware while leaving the completed triangle near-plane
-path useful.
+Lines are not clipped yet. A line with either endpoint outside any frustum
+plane is conservatively rejected whole, keeping invalid coordinates away from
+vintage hardware until a dedicated line-clipping pass is added.
 
 ## Perspective-correct texture W
 
@@ -146,8 +146,8 @@ After clipping, X5 emits `l10gl_vertex.w = 1 / clip.w`. For matrices created by
 so vertices at depths 2 and 4 emit W values 0.5 and 0.25. Orthographic clip W
 is constant 1, correctly retaining affine interpolation.
 
-When X3 creates a near-plane intersection, it interpolates homogeneous clip W
-first; X5 takes the reciprocal only when projecting that generated vertex.
+When X3 creates a frustum-plane intersection, it interpolates homogeneous clip
+W first; X5 takes the reciprocal only when projecting that generated vertex.
 Interpolating the already-reciprocal values would be incorrect. The ViRGE and
 swrast backends then interpolate `U*W`, `V*W`, and W and divide per fragment.
 
@@ -175,9 +175,9 @@ on the real ViRGE/DX on 2026-07-18.
 `make check` runs `test-pipeline` against a capture backend. It verifies exact
 screen coordinates and attributes, MODELVIEW connection, triangle grouping,
 strip alternation, fan origin, line pairing, incomplete primitives, bound
-texture selection, front/back culling, near-plane split/interpolation and
-boundary cases, conservative far/line rejection, the 2047-scanline guard,
-directional/ambient lighting, inverse-transpose normals, material capture,
-clamping, disabled-lighting compatibility, analytic reciprocal W values,
-MODELVIEW depth, orthographic W, and clipped-vertex W. The separate swrast
-suite validates the rasterizer receiving those calls.
+texture selection, front/back culling, near/far/side split and boundary cases,
+interpolation, viewport containment, conservative line rejection, the
+2047-scanline guard, directional/ambient lighting, inverse-transpose normals,
+material capture, clamping, disabled-lighting compatibility, analytic
+reciprocal W values, MODELVIEW depth, orthographic W, and clipped-vertex W.
+The separate swrast suite validates the rasterizer receiving those calls.

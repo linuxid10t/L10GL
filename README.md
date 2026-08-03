@@ -43,10 +43,10 @@ The frontend now also has OpenGL-convention MODELVIEW and PROJECTION matrix
 stacks plus an immediate-mode model-space geometry path. It captures current
 color/normal/texture attributes, assembles triangles, strips, fans, and lines,
 transforms them, applies opt-in directional plus ambient material lighting,
-clips triangles at the homogeneous near plane, performs CCW face culling, and
-emits perspective-correct texture W with the established screen-space backend
-primitives. The direct `l10gl_draw_triangle` API remains available and
-unchanged.
+clips triangles against the full homogeneous frustum, performs CCW face
+culling, and emits perspective-correct texture W with the established
+screen-space backend primitives. The direct `l10gl_draw_triangle` API remains
+available and unchanged.
 
 Phase 4 has started with a real `<GL/gl.h>` compatibility surface. Its first
 checkpoint maps immediate triangles/strips/fans/lines/quads/quad strips, current vertex
@@ -466,7 +466,7 @@ PLAN.md                          phased implementation roadmap
 See [`docs/BACKEND.md`](docs/BACKEND.md) before adding another card.
 Transform conventions and the X1 API are documented in
 [`docs/XFORM.md`](docs/XFORM.md).
-Immediate submission, homogeneous near-plane clipping, and current limits are
+Immediate submission, homogeneous frustum clipping, and current limits are
 documented in
 [`docs/PIPELINE.md`](docs/PIPELINE.md).
 

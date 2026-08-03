@@ -554,6 +554,20 @@ cache. The rerun must capture that first timeout line before changing any
 render state; it distinguishes upload, FIFO submission, page-flip, and cleanup
 stalls.
 
+*Bounded-wait rerun (2026-08-03): software frustum clipping pending hardware
+gate.* The run reached the demo and displayed an untextured weapon over a
+garbled frame. The first failure was a textured-triangle state update:
+`emit_cached_state` needed 14 FIFO slots while the busy engine remained at
+eight free slots for one second. Repeated recovery reached the same state with
+multiple valid texture addresses and sizes, excluding texture allocation and
+one corrupt asset. The common pipeline was only clipping the near plane and
+delegated X/Y to the ViRGE hardware clip rectangle, but ViRGE commands keep HC
+disabled because that silicon path is unusable. Full six-plane homogeneous
+triangle clipping is now implemented and capture-tested so off-screen GLQuake
+world polygons cannot wrap ViRGE geometry fields or framebuffer addresses.
+The next silicon run must verify that the first demo frame renders without a
+FIFO timeout before Q11 can advance.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE

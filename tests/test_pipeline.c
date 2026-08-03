@@ -401,7 +401,7 @@ static void test_culling_and_clip_rejection(struct l10gl_ctx *ctx)
     expect_int("valid triangle after rejection", capture.triangle_count, 1);
 }
 
-static void test_near_plane_clipping(struct l10gl_ctx *ctx)
+static void test_depth_plane_clipping(struct l10gl_ctx *ctx)
 {
     const struct captured_triangle *first;
 
@@ -471,15 +471,20 @@ static void test_near_plane_clipping(struct l10gl_ctx *ctx)
     expect_int("near-boundary triangle retained", capture.triangle_count, 1);
     expect_float("near-boundary depth", capture.triangles[0].v[0].z, 0);
 
-    /* Far clipping is intentionally conservative and line clipping has not
-     * landed: either crossing is rejected whole rather than producing bad Z. */
+    /* The far plane is clipped too, rather than rejecting a crossing
+     * primitive whole. Every emitted depth remains in the hardware range. */
     reset_capture();
     l10gl_begin(ctx, L10GL_TRIANGLES);
     l10gl_vertex3f(ctx, 0, .5f, -20);
     l10gl_vertex3f(ctx, -1, -1, -2);
     l10gl_vertex3f(ctx, 1, -1, -2);
     l10gl_end(ctx);
-    expect_int("far crossing rejected", capture.triangle_count, 0);
+    expect_int("far crossing clips to two triangles", capture.triangle_count, 2);
+    for (int i = 0; i < capture.triangle_count; i++)
+        for (int j = 0; j < 3; j++)
+            expect_int("far-clipped depth in range",
+                       capture.triangles[i].v[j].z >= -EPSILON &&
+                       capture.triangles[i].v[j].z <= 1.0f + EPSILON, 1);
 
     reset_capture();
     l10gl_begin(ctx, L10GL_LINES);
@@ -490,6 +495,90 @@ static void test_near_plane_clipping(struct l10gl_ctx *ctx)
 
     l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
     l10gl_load_identity(ctx);
+}
+
+static void expect_all_triangles_in_view(float width, float height)
+{
+    for (int i = 0; i < capture.triangle_count; i++) {
+        for (int j = 0; j < 3; j++) {
+            const struct l10gl_vertex *vertex = &capture.triangles[i].v[j];
+
+            if (vertex->x >= -EPSILON && vertex->x <= width + EPSILON &&
+                vertex->y >= -EPSILON && vertex->y <= height + EPSILON)
+                continue;
+            fprintf(stderr,
+                    "test-pipeline: side-clipped vertex %.9g,%.9g is outside %.9g,%.9g\n",
+                    vertex->x, vertex->y, width, height);
+            failures++;
+            return;
+        }
+    }
+}
+
+static void test_side_plane_clipping(struct l10gl_ctx *ctx)
+{
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_MODELVIEW);
+    l10gl_load_identity(ctx);
+    l10gl_matrix_mode(ctx, L10GL_MATRIX_PROJECTION);
+    l10gl_load_identity(ctx);
+    l10gl_viewport(ctx, 0, 0, 100, 80);
+    l10gl_depth_range(ctx, 0, 1);
+    l10gl_cull_face(ctx, L10GL_CULL_NONE);
+
+    reset_capture();
+
+    /* One vertex outside each side plane turns the triangle into a clipped
+     * quad. These are exactly the coordinates that must not reach a ViRGE
+     * command while its hardware-clip bit is disabled. */
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, 2, 0, 0);
+    l10gl_vertex3f(ctx, -.5f, -.5f, 0);
+    l10gl_vertex3f(ctx, -.5f, .5f, 0);
+    l10gl_end(ctx);
+    expect_int("right crossing clips to two triangles",
+               capture.triangle_count, 2);
+
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, -2, 0, 0);
+    l10gl_vertex3f(ctx, .5f, .5f, 0);
+    l10gl_vertex3f(ctx, .5f, -.5f, 0);
+    l10gl_end(ctx);
+    expect_int("left crossing clips to two triangles",
+               capture.triangle_count, 4);
+
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, 0, 2, 0);
+    l10gl_vertex3f(ctx, .5f, -.5f, 0);
+    l10gl_vertex3f(ctx, -.5f, -.5f, 0);
+    l10gl_end(ctx);
+    expect_int("top crossing clips to two triangles",
+               capture.triangle_count, 6);
+
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, 0, -2, 0);
+    l10gl_vertex3f(ctx, -.5f, .5f, 0);
+    l10gl_vertex3f(ctx, .5f, .5f, 0);
+    l10gl_end(ctx);
+    expect_int("bottom crossing clips to two triangles",
+               capture.triangle_count, 8);
+    expect_all_triangles_in_view(100, 80);
+
+    reset_capture();
+    l10gl_begin(ctx, L10GL_TRIANGLES);
+    l10gl_vertex3f(ctx, 1.5f, -.5f, 0);
+    l10gl_vertex3f(ctx, 2.0f, 0, 0);
+    l10gl_vertex3f(ctx, 1.5f, .5f, 0);
+    l10gl_end(ctx);
+    expect_int("fully right-clipped triangle dropped",
+               capture.triangle_count, 0);
+
+    /* Lines remain whole-segment rejected until line clipping is added. */
+    l10gl_begin(ctx, L10GL_LINES);
+    l10gl_vertex3f(ctx, 0, 0, 0);
+    l10gl_vertex3f(ctx, 2, 0, 0);
+    l10gl_end(ctx);
+    expect_int("side-crossing line conservatively rejected",
+               capture.line_count, 0);
 }
 
 /* A convex pentagon. Vertices are listed counter-clockwise, so the forward
@@ -863,7 +952,8 @@ int main(void)
     test_quad_assembly(&ctx);
     test_line_assembly(&ctx);
     test_culling_and_clip_rejection(&ctx);
-    test_near_plane_clipping(&ctx);
+    test_depth_plane_clipping(&ctx);
+    test_side_plane_clipping(&ctx);
     test_polygon_assembly(&ctx);
     test_triangle_scan_guard(&ctx);
     test_perspective_texture_w(&ctx);
@@ -875,6 +965,6 @@ int main(void)
         return 1;
     }
     printf("test-pipeline: PASS (attributes, triangle/quad/polygon assembly, transforms, culling, "
-           "near clipping, interpolation, scan guard, lighting, perspective W)\n");
+           "full frustum clipping, interpolation, scan guard, lighting, perspective W)\n");
     return 0;
 }

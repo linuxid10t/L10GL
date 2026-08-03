@@ -86,10 +86,10 @@ Already working through the GL shim on swrast and ViRGE:
 - clear, finish, double-buffered presentation, errors, and L10GL-owned
   fullscreen context lifetime.
 
-Important current limits include only near-plane clipping, one light, no
-state-query surface, no vertex arrays, no display lists, no pixel/raster
-commands, no evaluators, no selection/feedback, and only a fraction of the
-specified texture and per-fragment state.
+Important current limits include conservative whole-segment line clipping,
+one light, no state-query surface, no vertex arrays, no display lists, no
+pixel/raster commands, no evaluators, no selection/feedback, and only a
+fraction of the specified texture and per-fragment state.
 
 ## Hardware mapping
 

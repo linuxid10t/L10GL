@@ -79,8 +79,8 @@ reversed depth range is valid.
 
 `l10gl_object_to_clip()` applies the current MODELVIEW and PROJECTION matrices
 without dividing by clip W. Keeping clip coordinates intact lets X3 clip
-triangles against the near plane before the perspective divide. After clipping
-and division, the pipeline passes NDC coordinates to
+triangles against the full frustum before the perspective divide. After
+clipping and division, the pipeline passes NDC coordinates to
 `l10gl_ndc_to_window()`.
 
 `make check` runs `test-xform`, which verifies matrix ordering, load/multiply,
