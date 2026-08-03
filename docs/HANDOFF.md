@@ -573,6 +573,19 @@ near/far and all four side crossings and prove every emitted coordinate stays
 inside the viewport. This correction is pushed for a silicon rerun; Q11 is
 still open until that run completes without the first FIFO timeout.
 
+The full-frustum rerun completed the entire demo without the FIFO wedge and
+showed correct geometry, closing the clipping/hang diagnosis. Texture output
+then varied by asset: weapon textures and some enemy skins were correct, while
+world textures and other enemy skins were corrupt. Inspection found the
+shape-dependent defect in Q3: the replication upload was correct, but
+`virge_draw_textured_triangle` scaled both normalized axes by the
+bounding-square side. A 128x32 texture therefore traversed four vertical
+copies for V=0..1. The bound ViRGE state now retains the original width and
+height and scales U/V independently; square textures and raw diagnostic
+fallback behavior are unchanged. Hardware-independent tests cover 128x32
+scaling. A silicon rerun is still required before closing the Q3/Q11 texture
+gate.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

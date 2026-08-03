@@ -564,6 +564,8 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
     if (!tex || !tex->backend_data) {
         hw->tex_bound = 0;
         hw->tex_base = 0;
+        hw->tex_width = 0;
+        hw->tex_height = 0;
         priv->tex_has_alpha = 0;
         virge_update_blend_bits(priv);
         return;
@@ -584,6 +586,8 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
      * side, not tex->width -- a tall rectangle's pitch is its height. */
     int side = tex->width > tex->height ? tex->width : tex->height;
     hw->tex_stride = side * tex->bytes_per_texel;
+    hw->tex_width = (uint32_t)tex->width;
+    hw->tex_height = (uint32_t)tex->height;
 
     /* Cache CMD_SET bits for this texture's format.
      *

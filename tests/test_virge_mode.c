@@ -618,6 +618,24 @@ static void test_texture_replication(void)
                     ok = 0;
         EXPECT(ok, "tall rectangle tiles its short (width) axis");
     }
+
+    /* Normalized coordinates advance by the original dimensions, not the
+     * bounding-square side. This makes 0..1 traverse one 128x32 source copy;
+     * replication then keeps larger repeated coordinates exact. */
+    {
+        float u = 0.5f, v = 0.5f;
+        virge_texture_scale_uv(&u, &v, 128, 32, 7);
+        EXPECT(u == 64.0f && v == 16.0f,
+               "rectangular UV uses independent source dimensions");
+    }
+
+    /* Raw diagnostics set only CMD_SET's square-size field. */
+    {
+        float u = 0.5f, v = 0.25f;
+        virge_texture_scale_uv(&u, &v, 0, 0, 6);
+        EXPECT(u == 32.0f && v == 16.0f,
+               "unset dimensions retain square diagnostic scaling");
+    }
 }
 
 #undef REP_TEXEL
@@ -639,6 +657,6 @@ int main(void)
     if (failed)
         return 1;
     printf("test-virge-mode: PASS (modes, CRTC, FIFO/state cache, presentation, "
-           "triangle gates, texture replication, texture heap)\n");
+           "triangle gates, texture replication/scaling, texture heap)\n");
     return 0;
 }

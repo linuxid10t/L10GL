@@ -2060,18 +2060,17 @@ void virge_draw_line(struct virge_ctx *ctx,
  *        of two that is max(w,h), which is itself a power of two.
  * @dst:  Destination texels, side*side elements of @bpt bytes each.
  *
- * DB019-B §19.4 programs the texture engine with a single square 2^s, and
- * the sampler (virge_draw_textured_triangle) applies one tex_scale to both
- * axes, addressing the whole square. A rectangular WxH image is therefore
- * stored as its bounding square with the short axis tile-replicated to fill
- * it. Because both dimensions are powers of two, side is an exact multiple
- * of each, so the source repeats whole: GL_REPEAT on the short axis stays
- * exact, at the cost of side*side texels in VRAM. GL_CLAMP on a replicated
- * (short) axis is inexact and documented as a limitation. A square source
- * (w == h == side) is a straight copy, byte-for-byte identical.
+ * DB019-B §19.4 programs the texture engine with a single square 2^s. A
+ * rectangular WxH image is therefore stored as its bounding square with the
+ * short axis tile-replicated to fill it. The draw path converts normalized U
+ * and V with the independent source width and height; because both dimensions
+ * are powers of two and side is an exact multiple of each, coordinates beyond
+ * one source image still find an identical replicated copy. GL_REPEAT stays
+ * exact at the cost of side*side texels in VRAM. GL_CLAMP on a replicated
+ * short axis remains inexact. A square source is copied byte-for-byte.
  */
 void virge_replicate_to_square(const void *src, int w, int h, int bpt,
-                                int side, void *dst)
+                               int side, void *dst)
 {
     const uint8_t *s = src;
     uint8_t *d = dst;
@@ -2083,6 +2082,15 @@ void virge_replicate_to_square(const void *src, int w, int h, int bpt,
         for (int x = 0; x < side; x += w)
             memcpy(drow + (size_t)x * (size_t)bpt, srow, src_row);
     }
+}
+
+void virge_texture_scale_uv(float *u, float *v, uint32_t width,
+                            uint32_t height, int s_val)
+{
+    float fallback = (float)(1u << s_val);
+
+    *u *= width ? (float)width : fallback;
+    *v *= height ? (float)height : fallback;
 }
 
 void virge_upload_texture(struct virge_ctx *ctx, uint32_t dest,
@@ -2202,19 +2210,22 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
      * plane-equation approach as color gradients.
      *
      * The caller provides W = 1/Z_eye (perspective) or W = 1.0 (disable).
-     * Per the API contract (l10gl.h) U and V arrive NORMALIZED in [0,1]; the
-     * engine takes texel-unit coords, so scale by the texture side 2^s once
-     * here -- every gradient and start below then derives in texel units.
-     * (texprobe v1/v2 assumed this scaling; its absence made a normalized UV of
-     * 1.0 select texel 1 instead of 63.) For perspective the driver also
-     * pre-multiplies U,V by W (below) so the engine's (U*W)/W divide recovers U.
+     * Per the API contract (l10gl.h) U and V arrive normalized; the engine
+     * takes texel-unit coordinates. Scale each axis by its original source
+     * dimension. Rectangles live in a replicated square allocation, but
+     * scaling both axes by that square side would make the short axis traverse
+     * multiple copies for U/V 0..1. Direct low-level diagnostics do not set
+     * tex_width/height and retain the established 2^s fallback. For
+     * perspective the driver also pre-multiplies U,V by W below.
      */
     int s_val = (ctx->tex_cmd_bits >> 8) & 0xF;
     if (s_val == 0) s_val = 6;  /* safe default */
-    float tex_scale = (float)(1 << s_val);
-    v0.u *= tex_scale; v0.v *= tex_scale;
-    v1.u *= tex_scale; v1.v *= tex_scale;
-    v2.u *= tex_scale; v2.v *= tex_scale;
+    virge_texture_scale_uv(&v0.u, &v0.v, ctx->tex_width, ctx->tex_height,
+                           s_val);
+    virge_texture_scale_uv(&v1.u, &v1.v, ctx->tex_width, ctx->tex_height,
+                           s_val);
+    virge_texture_scale_uv(&v2.u, &v2.v, ctx->tex_width, ctx->tex_height,
+                           s_val);
 
     /* Perspective-correct texturing: the engine interpolates TUS/TVS/TWS
      * linearly and divides per pixel (texel = TUS/TWS, proven on silicon --
@@ -2290,8 +2301,8 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
     if (z_s < 0.0f) z_s = 0.0f;
     if (z_s > 1.0f) z_s = 1.0f;
 
-    /* s_val (texture side 2^s, from CMD_SET bits 11-8) was computed above,
-     * where tex_scale = 2^s scaled the normalized vertex UV into texel units. */
+    /* s_val (allocation side 2^s, from CMD_SET bits 11-8) was computed above;
+     * normalized vertex UV was independently scaled by source width/height. */
 
     /* U/V fractional-bit count. Two silicon-proven values:
      *   NON-persp: 27-s_val (=21 for s=6) -- v15: ufrac 21 perfect, 19 -> R/4

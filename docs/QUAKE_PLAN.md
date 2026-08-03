@@ -227,19 +227,20 @@ Relax the shim's square-only rule into a per-backend capability:
 - **ViRGE:** DB019-B §19.4 (PDF p. 251) defines square 2^s textures only.
   Represent a W×H rectangle as its bounding square with the short axis
   **tile-replicated** to fill the square (e.g. 128×32 stored as 128×128
-  containing four vertical repeats). Unlike padding plus UV rescale,
-  replication keeps `GL_REPEAT` exact — Quake's world UVs span many
-  repeats — at a VRAM cost that Q10's format work offsets. Document the
-  cost table; `GL_CLAMP` on a replicated axis is inexact and must be
-  reported in the limitations doc if Q0 shows Quake needs clamped
-  rectangles.
+  containing four vertical repeats). Convert normalized U and V to texels
+  with the original width and height independently, while the command's `s`
+  field and source stride still describe the bounding square. Replication plus
+  those per-axis scales keeps `GL_REPEAT` exact — Quake's world UVs span many
+  repeats — at a VRAM cost that Q10's format work offsets. `GL_CLAMP` on a
+  replicated axis remains inexact.
 
   The replication is a pure function (`virge_replicate_to_square`,
   `src/backends/virge/virge.c`) producing `dst[sy][sx] == src[sy%h][sx%w]`;
   `virge_be_tex_image_2d` replicates rectangular uploads into the `max(w,h)`
   square (square textures upload verbatim, byte-for-byte unchanged), and
-  `bind_texture` programs the source stride from the square side, not
-  `tex->width`. VRAM cost = `max(w,h)² / (w·h) = max/min`:
+  `bind_texture` programs the source stride from the square side while saving
+  the original dimensions for U/V conversion. VRAM cost =
+  `max(w,h)² / (w·h) = max/min`:
 
   | Rectangle | Stored square | VRAM cost |
   |-----------|---------------|-----------|
@@ -262,8 +263,11 @@ unchanged byte-for-byte.
 *Status (Q3, swrast gate):* DONE — frontend accepts rectangular POT
 (`test_gl.c`), swrast repeat+clamp pixel tests on both axes
 (`test_swrast.c`), ViRGE replication unit test (`test_virge_mode.c`),
-square path byte-for-byte unchanged. DEFERRED — the `demos/` rectangle
-proof and ViRGE silicon run are a human hardware gate (Q11 era).
+square path byte-for-byte unchanged. The first full GLQuake silicon run exposed
+that ViRGE drawing still scaled both axes by the bounding-square side: square
+textures were unaffected, matching the report that weapon/model skins varied
+while world textures were corrupt. Independent width/height scaling is now
+unit-tested and awaits the Q11 rerun.
 
 ### Q4. `glTexSubImage2D`
 
@@ -567,6 +571,17 @@ triangle clipping is now implemented and capture-tested so off-screen GLQuake
 world polygons cannot wrap ViRGE geometry fields or framebuffer addresses.
 The next silicon run must verify that the first demo frame renders without a
 FIFO timeout before Q11 can advance.
+
+*Full-frustum rerun (2026-08-03): geometry/hang fixed; rectangular texture
+correction pending.* The complete timedemo ran without the prior FIFO wedge,
+and geometry rendered correctly. Weapon textures and some enemy skins were
+reported correct, while world textures and other enemy skins were corrupt.
+The backend replicated rectangular uploads into their required square ViRGE
+allocation correctly, but then multiplied both normalized U and V by that
+square side. For a 128x32 image, V=0..1 incorrectly traversed all four stored
+copies instead of one 32-row source image. The draw path now scales U by the
+original width and V by the original height, retaining 2^s fallback behavior
+for raw diagnostics. The next run is the rectangular-texture hardware gate.
 
 ### Q12. ViRGE lightmap strategy
 

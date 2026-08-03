@@ -743,6 +743,14 @@ struct virge_ctx {
      * Cached at bind and emitted only when dirty by program_3d_state. */
     uint32_t tex_stride;
 
+    /* Original image dimensions used to convert normalized GL U/V into
+     * texel coordinates. Rectangular images are replicated into a square
+     * allocation, but each axis must still advance by its original dimension
+     * so U/V 0..1 traverses one source image rather than the whole replicated
+     * square. Zero preserves the legacy low-level diagnostic fallback to 2^s. */
+    uint32_t tex_width;
+    uint32_t tex_height;
+
     /* DEBUG OVERRIDE for the texture-perspective U/V scale hunt (texprobe v7).
      * The driver normally encodes U/V with frac_bits = 27 - s_val (S(4+s).(27-s),
      * the datasheet format, correct for the NON-perspective path). But the
@@ -926,7 +934,13 @@ void virge_draw_line(struct virge_ctx *ctx,
  * hence unit-tested independently of the upload path.
  */
 void virge_replicate_to_square(const void *src, int w, int h, int bpt,
-                                int side, void *dst);
+                               int side, void *dst);
+
+/* Convert normalized U/V to texel units using independent source dimensions.
+ * Pure helper used by the draw path and hardware-independent tests. A zero
+ * dimension falls back to square side 2^s for direct diagnostic callers. */
+void virge_texture_scale_uv(float *u, float *v, uint32_t width,
+                            uint32_t height, int s_val);
 
 /*
  * virge_upload_texture - Copy texture data into offscreen VRAM.
