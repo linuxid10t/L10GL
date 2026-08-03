@@ -19,6 +19,11 @@ struct l10gl_gl_texture {
     enum l10gl_tex_wrap wrap;
     int is_texture;
     int uploaded;
+    /* Backend storage is chosen from the requested internal format.  Keep the
+     * retained image ARGB8888 for lossless glTexSubImage2D updates, then pack
+     * only the upload buffer when the hardware-friendly 16-bit formats are
+     * selected (Q10). */
+    enum l10gl_tex_format storage_format;
     /* Q4: retained converted ARGB8888 image so glTexSubImage2D can update a
      * subrectangle in shim-side memory and re-upload the whole level. */
     uint32_t *retained;
@@ -56,6 +61,8 @@ static struct l10gl_gl_state gl_state = {
     .shade_model = GL_SMOOTH,
 };
 
+static void gl_trace_texture_delete(GLuint name);
+
 static void gl_init_texture(struct l10gl_gl_texture *texture, GLuint name)
 {
     memset(texture, 0, sizeof(*texture));
@@ -68,11 +75,15 @@ static void gl_release_textures(void)
 {
     struct l10gl_gl_texture *texture = gl_state.textures;
 
-    if (gl_state.current)
+    if (gl_state.current) {
         l10gl_bind_texture(gl_state.current, NULL);
+        l10gl_tex_free(gl_state.current, &gl_state.default_texture.texture);
+    }
     while (texture) {
         struct l10gl_gl_texture *next = texture->next;
 
+        if (gl_state.current)
+            l10gl_tex_free(gl_state.current, &texture->texture);
         free(texture->retained);
         free(texture);
         texture = next;
@@ -847,15 +858,14 @@ void glDeleteTextures(GLsizei n, const GLuint *textures)
             struct l10gl_gl_texture *dead = *link;
 
             *link = dead->next;
+            gl_trace_texture_delete(dead->name);
             if (gl_state.bound_texture == dead) {
                 gl_state.bound_texture = &gl_state.default_texture;
                 gl_apply_texture_binding(ctx);
             }
-            /* Reclaim backend storage if the backend supports it (Q8): swrast
-             * frees its allocation; ViRGE's bump allocator does not yet, so
-             * tex_free is NULL there and storage lives until teardown (the
-             * Stage 3 free-list closes that gap). The retained CPU image (Q4)
-             * is always reclaimed with the name. */
+            /* Reclaim backend storage (Q8): swrast frees its allocation and
+             * ViRGE returns the block to its coalescing free-list. The
+             * retained CPU image (Q4) is always reclaimed with the name. */
             l10gl_tex_free(ctx, &dead->texture);
             free(dead->retained);
             free(dead);
@@ -1015,6 +1025,7 @@ static size_t gl_format_components(GLenum format)
     case GL_LUMINANCE:
     case GL_ALPHA:
     case GL_INTENSITY:  return 1;
+    case GL_RGBA4:      return 2; /* GLQuake -lm_2 packed ARGB4444 input */
     default:            return 0;
     }
 }
@@ -1055,11 +1066,125 @@ static uint32_t gl_pack_texel_argb(const uint8_t *texel, GLenum format)
         v = texel[0];
         red = green = blue = alpha = v;
         break;
+    case GL_RGBA4: {
+        /* GLQuake's -lm_2 path uses GL_RGBA4 as both its external format
+         * and its 16-bit source storage. The on-disk/host target is little
+         * endian; construct the word bytewise rather than assuming alignment.
+         * Expanding each nibble then packing it back to ARGB4444 is exact. */
+        uint16_t packed = (uint16_t)texel[0] | ((uint16_t)texel[1] << 8);
+        alpha = (uint8_t)(((packed >> 12) & 0xf) * 17);
+        red   = (uint8_t)(((packed >> 8) & 0xf) * 17);
+        green = (uint8_t)(((packed >> 4) & 0xf) * 17);
+        blue  = (uint8_t)((packed & 0xf) * 17);
+        break;
+    }
     default:
         break;
     }
     return ((uint32_t)alpha << 24) | ((uint32_t)red << 16) |
            ((uint32_t)green << 8) | blue;
+}
+
+/* Old GLQuake asks for internal component counts 3 and 4.  They are the
+ * deliberate 16-bit policy knobs: opaque textures use ARGB1555 and textures
+ * that retain alpha use ARGB4444. GL_RGBA4 is the explicit 4444 path used by
+ * Q7 lightmaps. The base-format enums retain ARGB8888 so the general shim and
+ * swrast reference do not silently lose precision. */
+static enum l10gl_tex_format gl_texture_storage_format(GLint internal_format)
+{
+    if (internal_format == 1)
+        return L10GL_TEX_FMT_ARGB1555;
+    if (internal_format == 2)
+        return L10GL_TEX_FMT_ARGB4444;
+    if (internal_format == 3)
+        return L10GL_TEX_FMT_ARGB1555;
+    if (internal_format == 4 || internal_format == (GLint)GL_RGBA4)
+        return L10GL_TEX_FMT_ARGB4444;
+    return L10GL_TEX_FMT_ARGB8888;
+}
+
+/* Optional Q10 integration trace. One successful base-level upload per line:
+ * width, height, and l10gl_tex_format numeric value. The budget tool uses the
+ * exact ViRGE rectangle-replication and eight-byte alignment rules; opening
+ * per record keeps context teardown and test environment changes simple. */
+static void gl_trace_texture_upload(GLuint name,
+                                    GLsizei width, GLsizei height,
+                                    enum l10gl_tex_format storage_format)
+{
+    const char *path = getenv("L10GL_TEXTURE_TRACE");
+    FILE *trace;
+
+    if (!path || !path[0])
+        return;
+    trace = fopen(path, "a");
+    if (!trace) {
+        fprintf(stderr, "L10GL: cannot append texture trace %s: %s\n",
+                path, strerror(errno));
+        return;
+    }
+    fprintf(trace, "U %u %d %d %d\n", name, width, height, storage_format);
+    fclose(trace);
+}
+
+static void gl_trace_texture_delete(GLuint name)
+{
+    const char *path = getenv("L10GL_TEXTURE_TRACE");
+    FILE *trace;
+
+    if (!path || !path[0])
+        return;
+    trace = fopen(path, "a");
+    if (!trace)
+        return;
+    fprintf(trace, "D %u\n", name);
+    fclose(trace);
+}
+
+static uint16_t gl_pack_argb1555(uint32_t argb)
+{
+    return (uint16_t)(((argb >> 16) & 0x8000u) |
+                      ((argb >> 9) & 0x7c00u) |
+                      ((argb >> 6) & 0x03e0u) |
+                      ((argb >> 3) & 0x001fu));
+}
+
+static uint16_t gl_pack_argb4444(uint32_t argb)
+{
+    return (uint16_t)(((argb >> 16) & 0xf000u) |
+                      ((argb >> 12) & 0x0f00u) |
+                      ((argb >> 8) & 0x00f0u) |
+                      ((argb >> 4) & 0x000fu));
+}
+
+/* Submit retained ARGB8888 texels in the object's selected backend storage.
+ * The temporary buffer makes upload format a residency concern, not a change
+ * to Q4's lossless CPU copy used by dynamic lightmap updates. */
+static int gl_upload_texture(struct l10gl_ctx *ctx,
+                             struct l10gl_gl_texture *object,
+                             GLsizei width, GLsizei height,
+                             enum l10gl_tex_format storage_format,
+                             const uint32_t *argb)
+{
+    size_t count = (size_t)width * (size_t)height;
+    uint16_t *packed;
+    int ret;
+
+    if (storage_format == L10GL_TEX_FMT_ARGB8888)
+        return l10gl_tex_image_2d(ctx, &object->texture, width, height,
+                                  storage_format, argb);
+    if (count > SIZE_MAX / sizeof(*packed))
+        return -ENOMEM;
+    packed = malloc(count * sizeof(*packed));
+    if (!packed)
+        return -ENOMEM;
+    for (size_t i = 0; i < count; i++) {
+        packed[i] = storage_format == L10GL_TEX_FMT_ARGB1555
+                  ? gl_pack_argb1555(argb[i]) : gl_pack_argb4444(argb[i]);
+    }
+    ret = l10gl_tex_image_2d(ctx, &object->texture, width, height,
+                             storage_format, packed);
+    free(packed);
+    return ret;
 }
 
 void glTexImage2D(GLenum target, GLint level, GLint internal_format,
@@ -1087,12 +1212,14 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
      * them natively, and the ViRGE backend represents a rectangle as its
      * bounding square with the short axis tile-replicated (Q3). */
     if (level != 0 || border != 0 ||
-        (internal_format != 3 && internal_format != 4 &&
+        (internal_format != 1 && internal_format != 2 &&
+         internal_format != 3 && internal_format != 4 &&
          internal_format != (GLint)GL_RGB &&
          internal_format != (GLint)GL_RGBA &&
          internal_format != (GLint)GL_LUMINANCE &&
          internal_format != (GLint)GL_ALPHA &&
-         internal_format != (GLint)GL_INTENSITY) ||
+         internal_format != (GLint)GL_INTENSITY &&
+         internal_format != (GLint)GL_RGBA4) ||
         width < 1 || height < 1 ||
         width > 512 || height > 512 ||
         !gl_is_power_of_two(width) || !gl_is_power_of_two(height)) {
@@ -1142,8 +1269,9 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
         }
     }
 
-    ret = l10gl_tex_image_2d(ctx, &object->texture, width, height,
-                             L10GL_TEX_FMT_ARGB8888, converted);
+    ret = gl_upload_texture(ctx, object, width, height,
+                            gl_texture_storage_format(internal_format),
+                            converted);
     if (ret) {
         free(converted);
         gl_record_error(GL_OUT_OF_MEMORY);
@@ -1155,6 +1283,9 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format,
     object->retained = converted;
     object->retained_width = width;
     object->retained_height = height;
+    object->storage_format = gl_texture_storage_format(internal_format);
+    gl_trace_texture_upload(object->name, width, height,
+                            object->storage_format);
     object->uploaded = 1;
     object->is_texture = object->name != 0;
     if (gl_state.texture_2d_enabled)
@@ -1410,12 +1541,14 @@ void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
     /* Re-upload the whole level through the existing backend path. The
      * per-frame full re-upload on ViRGE is a known cost (Q12), not a
      * correctness issue. */
-    if (l10gl_tex_image_2d(ctx, &object->texture, object->retained_width,
-                           object->retained_height, L10GL_TEX_FMT_ARGB8888,
-                           object->retained)) {
+    if (gl_upload_texture(ctx, object, object->retained_width,
+                          object->retained_height, object->storage_format,
+                          object->retained)) {
         gl_record_error(GL_OUT_OF_MEMORY);
         return;
     }
+    gl_trace_texture_upload(object->name, object->retained_width,
+                            object->retained_height, object->storage_format);
     if (gl_state.texture_2d_enabled)
         gl_apply_texture_binding(ctx);
 }

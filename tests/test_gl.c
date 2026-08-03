@@ -17,6 +17,7 @@
 struct capture_state {
     struct l10gl_vertex triangle[3];
     uint32_t texture_pixels[4];
+    uint16_t texture_words[4];
     struct l10gl_texture *bound_texture;
     int triangles;
     int textured_triangles;
@@ -95,7 +96,10 @@ static int capture_texture_upload(struct l10gl_ctx *ctx,
     if (count > 4)
         count = 4;
     memset(capture.texture_pixels, 0, sizeof(capture.texture_pixels));
-    memcpy(capture.texture_pixels, data, count * sizeof(uint32_t));
+    if (format == L10GL_TEX_FMT_ARGB8888)
+        memcpy(capture.texture_pixels, data, count * sizeof(uint32_t));
+    else
+        memcpy(capture.texture_words, data, count * sizeof(uint16_t));
     capture.texture_width = width;
     capture.texture_height = height;
     capture.texture_format = format;
@@ -103,7 +107,7 @@ static int capture_texture_upload(struct l10gl_ctx *ctx,
     texture->width = width;
     texture->height = height;
     texture->format = format;
-    texture->bytes_per_texel = 4;
+    texture->bytes_per_texel = format == L10GL_TEX_FMT_ARGB8888 ? 4 : 2;
     texture->backend_data = texture;
     return 0;
 }
@@ -1061,6 +1065,69 @@ static void test_lightmap_formats(struct l10gl_ctx *ctx)
     glDeleteTextures(1, &tex);
 }
 
+/* Q10: component-count internal formats are GLQuake's compact texture
+ * requests. The retained CPU image remains ARGB8888, while the backend sees
+ * exact 1555/4444 words. GL_RGBA4 is the explicit 4444 lightmap form. */
+static void test_16bit_texture_formats(struct l10gl_ctx *ctx)
+{
+    const GLubyte pixels[8] = {
+        255, 128, 0, 255,
+        0, 255, 17, 0,
+    };
+    GLuint tex;
+
+    (void)ctx;
+    memset(&capture, 0, sizeof(capture));
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, 3, 2, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    expect_int("1555 upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("1555 backend format", capture.texture_format,
+               L10GL_TEX_FMT_ARGB1555);
+    expect_int("1555 opaque orange", capture.texture_words[0], 0xfe00);
+    expect_int("1555 transparent green", capture.texture_words[1], 0x03e2);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, 4, 2, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    expect_int("4444 upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("4444 backend format", capture.texture_format,
+               L10GL_TEX_FMT_ARGB4444);
+    expect_int("4444 opaque orange", capture.texture_words[0], 0xff80);
+    expect_int("4444 transparent green", capture.texture_words[1], 0x00f1);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA4, 1, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    expect_int("rgba4 upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("rgba4 backend format", capture.texture_format,
+               L10GL_TEX_FMT_ARGB4444);
+    expect_int("rgba4 packing", capture.texture_words[0], 0xff80);
+
+    /* Q4's retained ARGB8888 copy must re-pack into the selected storage
+     * format on a dynamic-lightmap-style subimage update. */
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    (const GLubyte[]){ 8, 16, 24, 32 });
+    expect_int("rgba4 subimage ok", glGetError(), GL_NO_ERROR);
+    expect_int("rgba4 subimage stays 4444", capture.texture_format,
+               L10GL_TEX_FMT_ARGB4444);
+    expect_int("rgba4 subimage packing", capture.texture_words[0], 0x2011);
+
+    /* Actual GLQuake -lm_2 call shape: legacy two-component internal format
+     * and GL_RGBA4 packed source. It must round-trip the 4444 word exactly. */
+    glTexImage2D(GL_TEXTURE_2D, 0, 2, 1, 1, 0,
+                 GL_RGBA4, GL_UNSIGNED_BYTE,
+                 (const GLubyte[]){ 0x21, 0x8f });
+    expect_int("quake rgba4 lightmap upload ok", glGetError(), GL_NO_ERROR);
+    expect_int("quake rgba4 lightmap format", capture.texture_format,
+               L10GL_TEX_FMT_ARGB4444);
+    expect_int("quake rgba4 lightmap packing", capture.texture_words[0],
+               0x8f21);
+
+    glDeleteTextures(1, &tex);
+}
+
 /* Q7 two-pass lightmap render helper. Pass 1 paints `base_tex` (GL_REPLACE,
  * blend off); pass 2 paints `lm_tex` (GL_REPLACE) over it with a multiply
  * blend. The textures are uploaded by the caller; this only draws. */
@@ -1310,7 +1377,17 @@ static void test_texture_lifetime(void)
     expect_int("final delete empties list",
                swrast_debug_texture_count(&ctx), 0);
 
+    /* Changing contexts releases every remaining GL object through the old
+     * backend before discarding the shim's name table. */
+    glGenTextures(1, &reuse);
+    glBindTexture(GL_TEXTURE_2D, reuse);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    expect_int("context release has one live texture",
+               swrast_debug_texture_count(&ctx), 1);
     l10glMakeCurrent(NULL);
+    expect_int("context release frees live textures",
+               swrast_debug_texture_count(&ctx), 0);
     l10gl_destroy(&ctx);
 }
 
@@ -1334,6 +1411,7 @@ int main(void)
     test_texture_objects(&ctx);
     test_texture_subimage(&ctx);
     test_lightmap_formats(&ctx);
+    test_16bit_texture_formats(&ctx);
     test_quake_entry_points(&ctx);
     test_clear_and_sync(&ctx);
     test_stack_errors();
