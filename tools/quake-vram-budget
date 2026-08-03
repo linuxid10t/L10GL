@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Summarize a L10GL_TEXTURE_TRACE against the 4 MiB ViRGE/DX Q10 layout.
+# Trace events are `U name width height l10gl_tex_format` and `D name`. Upload
+# of an existing name replaces its storage; delete releases it. This models
+# the Q8 free-list contract instead of treating dynamic lightmap re-uploads as
+# permanently live allocations.
+
+set -euo pipefail
+
+trace=""
+width=640
+height=480
+vram_mib=4
+
+usage() {
+    cat <<EOF
+usage: tools/quake-vram-budget --trace FILE [--width N --height N --vram-mib N]
+
+Account recorded GLQuake texture lifetimes using the ViRGE free-list:
+16-bit RGB555 double color pages, a 16-bit Z buffer, eight-byte heap alignment,
+and square replication of rectangular texture uploads.
+EOF
+}
+
+die() { printf 'quake-vram-budget: error: %s\n' "$*" >&2; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --trace) trace=${2:?--trace needs a file}; shift 2 ;;
+    --width) width=${2:?--width needs a value}; shift 2 ;;
+    --height) height=${2:?--height needs a value}; shift 2 ;;
+    --vram-mib) vram_mib=${2:?--vram-mib needs a value}; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown option: $1" ;;
+    esac
+done
+
+[[ -n "$trace" && -r "$trace" ]] || die "--trace must name a readable trace"
+[[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ ]] || die "invalid dimensions"
+[[ "$vram_mib" =~ ^[1-9][0-9]*$ ]] || die "invalid VRAM size"
+vram_bytes=$((vram_mib * 1024 * 1024))
+
+# Two 16-bit color pages + 16-bit Z. Native RGB555 has a 2-byte stride per
+# pixel at the target mode, matching virge_buffer_layout_compute().
+heap_next=$((width * height * 2 * 3))
+heap_next=$(((heap_next + 7) & ~7))
+texture_base=$heap_next
+(( texture_base < vram_bytes )) || die "render targets leave no texture heap"
+available=$((vram_bytes - texture_base))
+events=0
+live_bytes=0
+peak_bytes=0
+live_count=0
+peak_count=0
+declare -A allocation_size=()
+declare -A allocation_address=()
+declare -A free_size=([$texture_base]=$available)
+
+# Replay virge_texheap.c: address-sorted first fit and coalescing on both sides.
+# The return address from alloc_block is published in allocated_address.
+alloc_block() {
+    local size=$1 start best="" remainder
+
+    for start in "${!free_size[@]}"; do
+        if (( free_size[$start] >= size )) &&
+           [[ -z "$best" || $start -lt $best ]]; then
+            best=$start
+        fi
+    done
+    [[ -n "$best" ]] || return 1
+    allocated_address=$best
+    remainder=$((free_size[$best] - size))
+    unset 'free_size[$best]'
+    (( remainder == 0 )) || free_size[$((best + size))]=$remainder
+}
+
+free_block() {
+    local address=$1 size=$2 start previous="" next=""
+
+    for start in "${!free_size[@]}"; do
+        (( start + free_size[$start] == address )) && previous=$start
+        (( address + size == start )) && next=$start
+    done
+    if [[ -n "$previous" ]]; then
+        address=$previous
+        size=$((size + free_size[$previous]))
+        unset 'free_size[$previous]'
+    fi
+    if [[ -n "$next" ]]; then
+        size=$((size + free_size[$next]))
+        unset 'free_size[$next]'
+    fi
+    free_size[$address]=$size
+}
+
+free_texture() {
+    local name=$1
+
+    [[ -n "${allocation_size[$name]+present}" ]] || return
+    free_block "${allocation_address[$name]}" "${allocation_size[$name]}"
+    live_bytes=$((live_bytes - allocation_size[$name]))
+    unset 'allocation_address[$name]'
+    unset 'allocation_size[$name]'
+    live_count=$((live_count - 1))
+}
+
+while read -r event name tex_width tex_height format extra; do
+    [[ -z "${event:-}" || "$event" == \#* ]] && continue
+    if [[ "$event" == D ]]; then
+        [[ "$name" =~ ^[0-9]+$ && -z "${tex_width:-}" ]] || die "malformed delete event"
+        free_texture "$name"
+        events=$((events + 1))
+        continue
+    fi
+    [[ "$event" == U ]] || die "unknown trace event $event"
+    [[ "$name" =~ ^[0-9]+$ && -n "${tex_width:-}" && -n "${tex_height:-}" && -n "${format:-}" && -z "${extra:-}" ]] || die "malformed upload event"
+    [[ "$tex_width" =~ ^[1-9][0-9]*$ && "$tex_height" =~ ^[1-9][0-9]*$ ]] || die "invalid texture dimensions"
+    case "$format" in
+    1) bpt=4 ;;                         # L10GL_TEX_FMT_ARGB8888
+    2|3|4) bpt=2 ;;                     # RGB565 / ARGB1555 / ARGB4444
+    5) bpt=1 ;;                         # PAL8
+    *) die "unknown l10gl texture format $format" ;;
+    esac
+    side=$(( tex_width > tex_height ? tex_width : tex_height ))
+    size=$(((side * side * bpt + 7) & ~7))
+    if [[ -n "${allocation_size[$name]+present}" ]]; then
+        free_texture "$name"
+    fi
+    if ! alloc_block "$size"; then
+        free_bytes=0
+        largest=0
+        for start in "${!free_size[@]}"; do
+            free_bytes=$((free_bytes + free_size[$start]))
+            (( free_size[$start] > largest )) && largest=${free_size[$start]}
+        done
+        die "event $((events + 1)) cannot allocate $size bytes ($free_bytes total free, $largest largest block)"
+    fi
+    allocation_address[$name]=$allocated_address
+    allocation_size[$name]=$size
+    live_count=$((live_count + 1))
+    live_bytes=$((live_bytes + size))
+    (( live_bytes > peak_bytes )) && peak_bytes=$live_bytes
+    (( live_count > peak_count )) && peak_count=$live_count
+    events=$((events + 1))
+done < "$trace"
+
+printf 'ViRGE Q10 budget: %d events, peak %d live textures using %d bytes (%d KiB) of %d bytes (%d KiB); %d bytes remain\n' \
+    "$events" "$peak_count" "$peak_bytes" "$((peak_bytes / 1024))" \
+    "$available" "$((available / 1024))" "$((available - peak_bytes))"
+
+if (( peak_bytes > available )); then
+    die "recorded live texture set exceeds VRAM by $((peak_bytes - available)) bytes"
+fi

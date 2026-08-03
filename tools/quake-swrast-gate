@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# quake-swrast-gate -- Phase 7 Q9 GLQuake acceptance gate.
+#
+# This deliberately contains no Quake source: it orchestrates the private
+# GPL L10GL-Quake checkout as a separate executable, while the only code here
+# remains the MIT L10GL driver and its test machinery.  See
+# docs/QUAKE_PLAN.md, Q9 for the boundary and acceptance criteria.
+
+set -euo pipefail
+
+readonly PAK0_SIZE=18689235
+readonly CANONICAL_DEMO1_FRAMES=969
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+quake_dir="${L10GL_QUAKE_DIR:-$repo_root/../L10GL-Quake}"
+output_dir=""
+timeout_seconds=180
+skip_fetch=0
+skip_build=0
+child_pid=""
+
+usage() {
+    cat <<EOF
+usage: tools/quake-swrast-gate [options]
+
+Build and run GLQuake's shareware demo1 through L10GL swrast, capture every
+presented frame, and verify the canonical timedemo frame count (${CANONICAL_DEMO1_FRAMES}).
+
+Options:
+  --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
+  --output-dir PATH  new directory for log and PPM captures (default: a new
+                     out/quake-q9.* directory)
+  --timeout SECONDS  completion deadline (default: ${timeout_seconds})
+  --skip-fetch       require an already-verified WinQuake/id1/pak0.pak
+  --skip-build       require an existing glquake.l10gl binary
+  -h, --help         show this help
+
+Environment:
+  L10GL_QUAKE_DIR and L10GL_QUAKE_BIN override the port checkout and binary.
+EOF
+}
+
+log() { printf 'quake-swrast-gate: %s\n' "$*" >&2; }
+die() { log "error: $*"; exit 1; }
+
+cleanup_child() {
+    if [[ -n "$child_pid" ]] && kill -0 "$child_pid" 2>/dev/null; then
+        kill -TERM "$child_pid" 2>/dev/null || true
+        wait "$child_pid" 2>/dev/null || true
+    fi
+}
+trap cleanup_child EXIT HUP INT TERM
+
+pak_is_valid() {
+    local pak="$1"
+    [[ -f "$pak" ]] || return 1
+    [[ "$(stat -c%s "$pak")" == "$PAK0_SIZE" ]] || return 1
+    [[ "$(head -c4 "$pak")" == "PACK" ]] || return 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --quake-dir)
+        [[ $# -ge 2 ]] || die "--quake-dir needs a path"
+        quake_dir="$2"
+        shift 2
+        ;;
+    --output-dir)
+        [[ $# -ge 2 ]] || die "--output-dir needs a path"
+        output_dir="$2"
+        shift 2
+        ;;
+    --timeout)
+        [[ $# -ge 2 ]] || die "--timeout needs a number of seconds"
+        timeout_seconds="$2"
+        shift 2
+        ;;
+    --skip-fetch) skip_fetch=1; shift ;;
+    --skip-build) skip_build=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown option: $1 (use --help)" ;;
+    esac
+done
+
+[[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die "--timeout must be a positive integer"
+[[ -d "$quake_dir/WinQuake" ]] || die "not an L10GL-Quake checkout: $quake_dir"
+
+pak="$quake_dir/WinQuake/id1/pak0.pak"
+if ! pak_is_valid "$pak"; then
+    [[ $skip_fetch -eq 0 ]] || die "missing or invalid shareware pak: $pak"
+    fetcher="$quake_dir/tools/fetch-shareware-data.sh"
+    [[ -x "$fetcher" ]] || die "shareware fetcher is not executable: $fetcher"
+    log "fetching and verifying shareware pak0.pak"
+    "$fetcher"
+    pak_is_valid "$pak" || die "fetcher did not produce a valid pak0.pak"
+fi
+
+binary="${L10GL_QUAKE_BIN:-$quake_dir/WinQuake/glquake.l10gl}"
+if [[ $skip_build -eq 0 ]]; then
+    # The executable links a static libl10gl.a. Always let make perform its
+    # cheap timestamp check so a newly-built driver cannot silently run an
+    # older embedded shim (notably the Q10 texture trace/budget path).
+    log "building GLQuake against $repo_root/libl10gl.a"
+    make -C "$quake_dir/WinQuake" -f Makefile.l10gl "L10GLDIR=$repo_root"
+fi
+[[ -x "$binary" ]] || die "build did not produce executable: $binary"
+
+if [[ -z "$output_dir" ]]; then
+    mkdir -p "$repo_root/out"
+    output_dir="$(mktemp -d "$repo_root/out/quake-q9.XXXXXX")"
+else
+    mkdir "$output_dir" || die "output directory must not already exist: $output_dir"
+fi
+
+run_root="$output_dir/run"
+mkdir -p "$run_root/id1"
+# Keep config.cfg and every transient output out of the GPL checkout and do
+# not copy the redistributable game data into this repository.
+ln -s "$pak" "$run_root/id1/pak0.pak"
+
+log_file="$output_dir/quake.log"
+dump_template="$output_dir/frame%04d.ppm"
+texture_trace="$output_dir/textures.tsv"
+texture_labels="$output_dir/texture-labels.tsv"
+log "results: $output_dir"
+log "starting timedemo demo1 (deadline: ${timeout_seconds}s)"
+
+(
+    cd "$run_root"
+    exec env L10GL_BACKEND=swrast L10GL_SWRAST_DUMP="$dump_template" \
+        L10GL_TEXTURE_TRACE="$texture_trace" \
+        L10GL_QUAKE_TEXTURE_LABELS="$texture_labels" \
+        stdbuf -oL -eL "$binary" \
+        -basedir "$run_root" -nosound -nocdaudio -noudp -nojoy -nomouse \
+        -width 320 -height 240 -bpp 16 +gl_max_size 256 +timedemo demo1
+) >"$log_file" 2>&1 &
+child_pid=$!
+
+deadline=$((SECONDS + timeout_seconds))
+result_line=""
+while kill -0 "$child_pid" 2>/dev/null; do
+    result_line="$(sed -nE 's/^([0-9]+) frames[[:space:]]+([0-9.]+) seconds[[:space:]]+([0-9.]+) fps$/\1 \2 \3/p' "$log_file" | tail -n 1)"
+    [[ -n "$result_line" ]] && break
+    (( SECONDS < deadline )) || die "timedemo did not finish within ${timeout_seconds}s; see $log_file"
+    sleep 1
+done
+
+if [[ -z "$result_line" ]]; then
+    wait "$child_pid" || true
+    child_pid=""
+    die "GLQuake exited before reporting a timedemo result; see $log_file"
+fi
+
+read -r frames seconds fps <<<"$result_line"
+if [[ "$frames" != "$CANONICAL_DEMO1_FRAMES" ]]; then
+    die "demo1 reported $frames frames; expected canonical $CANONICAL_DEMO1_FRAMES (see $log_file)"
+fi
+grep -Fq 'GL_RENDERER: L10GL/swrast' "$log_file" || die "did not initialize the L10GL swrast renderer; see $log_file"
+grep -Fq 'Video mode 320x240 (16bpp) initialized.' "$log_file" || die "did not initialize the requested video mode; see $log_file"
+
+# Quake returns to its normal demo loop after CL_FinishTimeDemo.  Completion
+# is the result line above; terminate now so the gate is bounded and lets the
+# port's signal handler exercise normal L10GL teardown.
+kill -TERM "$child_pid" 2>/dev/null || true
+wait "$child_pid" || true
+child_pid=""
+
+dump_count="$(find "$output_dir" -maxdepth 1 -type f -name 'frame*.ppm' | wc -l)"
+[[ "$dump_count" -gt 0 ]] || die "timedemo completed but no swrast frame was captured"
+[[ -s "$texture_trace" ]] || die "timedemo completed but did not record texture uploads"
+log "texture trace: $texture_trace (run tools/quake-vram-budget --trace to assess ViRGE residency)"
+log "PASS: demo1 reported $frames frames in ${seconds}s (${fps} fps); captured $dump_count PPM frames"
