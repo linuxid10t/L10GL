@@ -245,7 +245,7 @@ int main(int argc, char **argv)
            hw->tex_cmd_bits, s_val, 4 + s_val, 27 - s_val);
 
     /* ---- TEX VRAM readback: is the uploaded texture actually at TEX_BASE? ----
-     * tex->backend_data holds the absolute VRAM offset the bump allocator
+     * tex->backend_data holds the absolute VRAM offset the texture allocator
      * assigned (== the value written to VIRGE_3D_TEX_BASE). CPU-read it back
      * straight from the linear aperture and compare to what gen_uv_gradient
      * wrote. If these MISMATCH, the upload never landed in engine-visible

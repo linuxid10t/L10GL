@@ -21,6 +21,7 @@ LIB_SRCS = \
 	src/pci_scan.c \
 	src/backends/swrast/swrast.c \
 	src/backends/virge/virge_mode.c \
+	src/backends/virge/virge_texheap.c \
 	src/backends/virge/virge.c \
 	src/backends/virge/l10gl_virge.c \
 	src/backends/mga1064/mga1064.c \

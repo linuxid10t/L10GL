@@ -17,6 +17,7 @@
 #include "../../fbdev.h"
 #include "../../l10gl.h"
 #include "virge.h"
+#include "virge_texheap.h"
 
 /* ========================================================================
  * Color conversion helpers
@@ -49,6 +50,13 @@ static uint32_t rgb_to_888(float r, float g, float b)
  * Backend-private data
  * ======================================================================== */
 
+struct virge_texture_allocation {
+    struct l10gl_texture *texture;
+    uint32_t address;
+    uint32_t size;
+    struct virge_texture_allocation *next;
+};
+
 struct virge_private {
     struct virge_ctx hw;          /* low-level hardware context */
     int depth_test_enabled;
@@ -65,11 +73,36 @@ struct virge_private {
     /* Whether the currently-bound texture has an alpha channel (drives
      * the textured-path ABC choice: TEX_ALPHA vs SRC_ALPHA). */
     int tex_has_alpha;
+    struct virge_texheap tex_heap;
+    struct virge_texture_allocation *texture_allocations;
 };
 
 static inline struct virge_private *VIRGE_PRIV(struct l10gl_ctx *ctx)
 {
     return (struct virge_private *)ctx->backend_data;
+}
+
+static void virge_release_texture_allocation(struct virge_private *priv,
+                                              struct l10gl_texture *texture)
+{
+    struct virge_texture_allocation **link;
+    struct virge_texture_allocation *allocation;
+
+    if (!texture)
+        return;
+    for (link = &priv->texture_allocations;
+         *link && (*link)->texture != texture; link = &(*link)->next)
+        ;
+    allocation = *link;
+    if (!allocation) {
+        texture->backend_data = NULL;
+        return;
+    }
+    *link = allocation->next;
+    virge_texheap_free(&priv->tex_heap, allocation->address,
+                       allocation->size);
+    free(allocation);
+    texture->backend_data = NULL;
 }
 
 /* Map an L10GL depth function to the ViRGE ZBC compare-code bits
@@ -282,6 +315,15 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
     virge_update_z_cmd_bits(priv);
     virge_update_blend_bits(priv);
 
+    ret = virge_texheap_init(&priv->tex_heap, priv->hw.tex_heap_next,
+                             priv->hw.vram_size);
+    if (ret) {
+        virge_cleanup(&priv->hw);
+        free(priv);
+        ctx->backend_data = NULL;
+        return ret;
+    }
+
     return 0;
 }
 
@@ -289,6 +331,14 @@ static void virge_be_cleanup(struct l10gl_ctx *ctx)
 {
     struct virge_private *priv = VIRGE_PRIV(ctx);
     if (priv) {
+        while (priv->texture_allocations) {
+            struct virge_texture_allocation *next =
+                priv->texture_allocations->next;
+
+            free(priv->texture_allocations);
+            priv->texture_allocations = next;
+        }
+        virge_texheap_destroy(&priv->tex_heap);
         virge_cleanup(&priv->hw);
         free(priv);
         ctx->backend_data = NULL;
@@ -431,7 +481,7 @@ static void virge_be_fill_rect(struct l10gl_ctx *ctx,
 /* ========================================================================
  * Texture management
  *
- * tex_image_2d: Upload texture data to offscreen VRAM via the bump allocator.
+ * tex_image_2d: Upload texture data through the reclaiming VRAM free-list.
  * bind_texture: Cache TEX_BASE/stride and CMD_SET bits for this texture.
  * tex_parameter: Update cached filter/wrap mode.
  * ======================================================================== */
@@ -454,13 +504,21 @@ static int virge_be_tex_image_2d(struct l10gl_ctx *ctx,
     int side = width > height ? width : height;
     uint32_t tex_size = (uint32_t)side * (uint32_t)side * (uint32_t)bpt;
 
-    /* Align to quadword */
-    uint32_t tex_addr = (hw->tex_heap_next + 7) & ~7;
+    struct virge_texture_allocation *allocation;
+    uint32_t tex_addr;
 
-    /* Check we have enough VRAM */
-    if (tex_addr + tex_size > hw->vram_size) {
-        fprintf(stderr, "ViRGE: out of VRAM for texture (need %u, have %u)\n",
-                tex_addr + tex_size, hw->vram_size);
+    /* Native diagnostics historically pass stack texture records without
+     * zero-initializing them. Look up replacement ownership by object address
+     * in our side table rather than trusting the incoming backend_data bits. */
+    virge_release_texture_allocation(priv, tex);
+    if (virge_texheap_alloc(&priv->tex_heap, tex_size, &tex_addr)) {
+        fprintf(stderr, "ViRGE: out of VRAM for %u-byte texture (%u free)\n",
+                tex_size, virge_texheap_free_bytes(&priv->tex_heap));
+        return -1;
+    }
+    allocation = malloc(sizeof(*allocation));
+    if (!allocation) {
+        virge_texheap_free(&priv->tex_heap, tex_addr, tex_size);
         return -1;
     }
 
@@ -469,21 +527,29 @@ static int virge_be_tex_image_2d(struct l10gl_ctx *ctx,
         virge_upload_texture(hw, tex_addr, data, tex_size);
     } else {
         void *square = malloc(tex_size);
-        if (!square)
+        if (!square) {
+            virge_texheap_free(&priv->tex_heap, tex_addr, tex_size);
+            free(allocation);
             return -1;
+        }
         virge_replicate_to_square(data, width, height, bpt, side, square);
         virge_upload_texture(hw, tex_addr, square, tex_size);
         free(square);
     }
-
-    /* Bump allocator */
-    hw->tex_heap_next = tex_addr + tex_size;
 
     /* Store texture metadata */
     tex->width = width;
     tex->height = height;
     tex->format = format;
     tex->bytes_per_texel = bpt;
+    allocation->texture = tex;
+    allocation->address = tex_addr;
+    allocation->size = (tex_size + 7u) & ~7u;
+    allocation->next = priv->texture_allocations;
+    priv->texture_allocations = allocation;
+    /* Keep the long-standing native-backend contract: direct diagnostics
+     * inspect backend_data as an absolute VRAM byte offset. Allocation size
+     * and ownership live in the private side table above. */
     tex->backend_data = (void *)(uintptr_t)tex_addr;
 
     return 0;
@@ -557,6 +623,16 @@ static void virge_be_bind_texture(struct l10gl_ctx *ctx,
     virge_update_blend_bits(priv);
 }
 
+static void virge_be_tex_free(struct l10gl_ctx *ctx,
+                              struct l10gl_texture *tex)
+{
+    struct virge_private *priv = VIRGE_PRIV(ctx);
+    if (!tex || !tex->backend_data)
+        return;
+    virge_release_texture_allocation(priv, tex);
+    memset(tex, 0, sizeof(*tex));
+}
+
 static void virge_be_tex_parameter(struct l10gl_ctx *ctx,
                                     enum l10gl_tex_filter filter,
                                     enum l10gl_tex_wrap wrap)
@@ -616,6 +692,7 @@ const struct l10gl_backend virge_backend = {
     .draw_line            = virge_be_draw_line,
     .fill_rect            = virge_be_fill_rect,
     .tex_image_2d         = virge_be_tex_image_2d,
+    .tex_free             = virge_be_tex_free,
     .bind_texture         = virge_be_bind_texture,
     .tex_parameter        = virge_be_tex_parameter,
     .wait_engine          = virge_be_wait_engine,

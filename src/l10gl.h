@@ -246,9 +246,7 @@ struct l10gl_backend {
                           enum l10gl_tex_filter filter,
                           enum l10gl_tex_wrap wrap);
     /* Release the backend storage for a texture when its GL name is deleted
-     * (Q8). Optional: backends whose allocator reclaims only at teardown
-     * (ViRGE's bump allocator, pending the Q8 free-list) leave this NULL and
-     * the frontend no-ops, matching the prior leak-until-teardown behavior. */
+     * (Q8). Optional for backends that reclaim only at teardown. */
     void (*tex_free)(struct l10gl_ctx *ctx, struct l10gl_texture *tex);
 
     /* --- Synchronization --- */
@@ -486,7 +484,7 @@ void l10gl_tex_parameter(struct l10gl_ctx *ctx,
                          enum l10gl_tex_filter filter,
                          enum l10gl_tex_wrap wrap);
 /* Release backend storage for a texture (Q8). No-op if the backend does not
- * implement tex_free (e.g. ViRGE until the free-list lands). */
+ * implement tex_free. */
 void l10gl_tex_free(struct l10gl_ctx *ctx, struct l10gl_texture *tex);
 
 /* Sync */

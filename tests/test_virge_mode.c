@@ -8,6 +8,7 @@
 
 #include "backends/virge/virge.h"
 #include "backends/virge/virge_mode.h"
+#include "backends/virge/virge_texheap.h"
 
 static int failed;
 
@@ -17,6 +18,37 @@ static int failed;
         failed = 1;                                                       \
     }                                                                     \
 } while (0)
+
+static void test_texture_heap(void)
+{
+    struct virge_texheap heap = {0};
+    uint32_t a, b, c;
+
+    EXPECT(virge_texheap_init(&heap, 101, 1101) == 0,
+           "texture heap init aligns bounds");
+    EXPECT(virge_texheap_free_bytes(&heap) == 992,
+           "texture heap initial capacity");
+    EXPECT(virge_texheap_alloc(&heap, 993, &a) == -ENOSPC &&
+           virge_texheap_free_bytes(&heap) == 992,
+           "texture heap rejects OOM without consuming space");
+    EXPECT(virge_texheap_alloc(&heap, 100, &a) == 0 && a == 104,
+           "texture heap first allocation");
+    EXPECT(virge_texheap_alloc(&heap, 200, &b) == 0 && b == 208,
+           "texture heap second allocation");
+    EXPECT(virge_texheap_free(&heap, a, 100) == 0,
+           "texture heap free first block");
+    EXPECT(virge_texheap_alloc(&heap, 64, &c) == 0 && c == a,
+           "texture heap first-fit reuse");
+    EXPECT(virge_texheap_free(&heap, c, 64) == 0 &&
+           virge_texheap_free(&heap, b, 200) == 0 &&
+           virge_texheap_free_bytes(&heap) == 992,
+           "texture heap coalesces both neighbors");
+    EXPECT(virge_texheap_free(&heap, b, 8) == -EINVAL,
+           "texture heap rejects overlapping free");
+    EXPECT(virge_texheap_free(&heap, heap.start, 2000) == -ERANGE,
+           "texture heap rejects a free larger than its address range");
+    virge_texheap_destroy(&heap);
+}
 
 static void test_fixed_modes(void)
 {
@@ -592,6 +624,7 @@ static void test_texture_replication(void)
 
 int main(void)
 {
+    test_texture_heap();
     test_fixed_modes();
     test_mode_validation();
     test_pll();
@@ -606,6 +639,6 @@ int main(void)
     if (failed)
         return 1;
     printf("test-virge-mode: PASS (modes, CRTC, FIFO/state cache, presentation, "
-           "triangle gates, texture replication)\n");
+           "triangle gates, texture replication, texture heap)\n");
     return 0;
 }
