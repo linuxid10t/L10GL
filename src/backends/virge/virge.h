@@ -751,6 +751,11 @@ struct virge_ctx {
     uint32_t tex_width;
     uint32_t tex_height;
 
+    /* Normalize repeated GL texture coordinates into the small positive range
+     * proven by texprobe. Enabled by the L10GL backend; left zero by raw
+     * diagnostics that intentionally exercise out-of-range hardware values. */
+    int tex_uv_rebase;
+
     /* DEBUG OVERRIDE for the texture-perspective U/V scale hunt (texprobe v7).
      * The driver normally encodes U/V with frac_bits = 27 - s_val (S(4+s).(27-s),
      * the datasheet format, correct for the NON-perspective path). But the
@@ -941,6 +946,11 @@ void virge_replicate_to_square(const void *src, int w, int h, int bpt,
  * dimension falls back to square side 2^s for direct diagnostic callers. */
 void virge_texture_scale_uv(float *u, float *v, uint32_t width,
                             uint32_t height, int s_val);
+
+/* Subtract one common integer period from a triangle's coordinates. This is
+ * exact under GL_REPEAT because it preserves every edge delta and fractional
+ * coordinate while moving negative/large values into a small positive range. */
+void virge_rebase_repeat_axis(float *a, float *b, float *c);
 
 /*
  * virge_upload_texture - Copy texture data into offscreen VRAM.

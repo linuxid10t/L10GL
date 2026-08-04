@@ -636,6 +636,20 @@ static void test_texture_replication(void)
         EXPECT(u == 32.0f && v == 16.0f,
                "unset dimensions retain square diagnostic scaling");
     }
+
+    /* GLQuake world coordinates routinely arrive negative and several
+     * periods from zero. One common integer shift keeps all edge deltas and
+     * fractional positions exact while moving the triangle positive. */
+    {
+        float a = -3.875f, b = -7.375f, c = -7.375f;
+        float ab = a - b, ac = a - c;
+
+        virge_rebase_repeat_axis(&a, &b, &c);
+        EXPECT(a == 4.125f && b == 0.625f && c == 0.625f,
+               "negative repeated UVs rebase to a small positive range");
+        EXPECT(a - b == ab && a - c == ac,
+               "repeat rebasing preserves triangle coordinate deltas");
+    }
 }
 
 #undef REP_TEXEL
@@ -657,6 +671,6 @@ int main(void)
     if (failed)
         return 1;
     printf("test-virge-mode: PASS (modes, CRTC, FIFO/state cache, presentation, "
-           "triangle gates, texture replication/scaling, texture heap)\n");
+           "triangle gates, texture replication/scaling/rebasing, texture heap)\n");
     return 0;
 }

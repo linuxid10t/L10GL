@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -2093,6 +2094,16 @@ void virge_texture_scale_uv(float *u, float *v, uint32_t width,
     *v *= height ? (float)height : fallback;
 }
 
+void virge_rebase_repeat_axis(float *a, float *b, float *c)
+{
+    float minimum = fminf(*a, fminf(*b, *c));
+    float period = floorf(minimum);
+
+    *a -= period;
+    *b -= period;
+    *c -= period;
+}
+
 void virge_upload_texture(struct virge_ctx *ctx, uint32_t dest,
                            const void *data, size_t size)
 {
@@ -2220,6 +2231,10 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
      */
     int s_val = (ctx->tex_cmd_bits >> 8) & 0xF;
     if (s_val == 0) s_val = 6;  /* safe default */
+    if (ctx->tex_uv_rebase && (ctx->tex_cmd_bits & VIRGE_CMD_TEX_WRAP)) {
+        virge_rebase_repeat_axis(&v0.u, &v1.u, &v2.u);
+        virge_rebase_repeat_axis(&v0.v, &v1.v, &v2.v);
+    }
     virge_texture_scale_uv(&v0.u, &v0.v, ctx->tex_width, ctx->tex_height,
                            s_val);
     virge_texture_scale_uv(&v1.u, &v1.v, ctx->tex_width, ctx->tex_height,

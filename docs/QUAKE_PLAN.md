@@ -269,6 +269,9 @@ textures were unaffected, matching the report that weapon/model skins varied
 while world textures were corrupt. Independent width/height scaling is now
 unit-tested and awaits the Q11 rerun.
 
+The per-axis silicon rerun looked materially unchanged, so that correction is
+retained for exact rectangular semantics but is not the primary corruption.
+
 ### Q4. `glTexSubImage2D`
 
 Keep the converted ARGB8888 image of every GL texture in shim-side system
@@ -582,6 +585,21 @@ square side. For a 128x32 image, V=0..1 incorrectly traversed all four stored
 copies instead of one 32-row source image. The draw path now scales U by the
 original width and V by the original height, retaining 2^s fallback behavior
 for raw diagnostics. The next run is the rectangular-texture hardware gate.
+
+*Texture isolation reruns (2026-08-03): coordinate range pending hardware
+gate.* Per-axis rectangle scaling left the corruption about the same. Forcing
+`GL_NEAREST` also left it visually unchanged, while increasing frame rate, so
+the unverified bilinear path is not the corruption source. Raising
+`gl_picmip` from 2 to 3 changed the result only slightly and did not remove the
+failure, excluding absolute upload size as the primary cause. A debugger trace
+of the same shareware demo through swrast then captured the first large world
+triangle at UVs `(-3.875,-4)`, `(-7.375,-4)`, and `(-7.375,-1.375)`; existing
+ViRGE texture probes cover small positive coordinates almost exclusively. The
+ViRGE GL path now subtracts one common integer period per triangle and axis
+when `GL_REPEAT` is active. This is mathematically exact—fractional positions
+and all gradients are unchanged—but moves negative/large coordinates into the
+silicon-proven range. Raw diagnostics retain their unreduced inputs. The next
+run is the repeat-coordinate hardware gate.
 
 ### Q12. ViRGE lightmap strategy
 

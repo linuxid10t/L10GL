@@ -586,6 +586,18 @@ fallback behavior are unchanged. Hardware-independent tests cover 128x32
 scaling. A silicon rerun is still required before closing the Q3/Q11 texture
 gate.
 
+That per-axis rerun remained about the same, proving the real semantic fix was
+not the primary visual failure. `GL_NEAREST` likewise preserved the corruption
+but ran faster, ruling out bilinear filtering. `gl_picmip 3` changed the result
+only slightly without curing it, so absolute texture size is secondary. A
+local debugger trace of the shareware demo through swrast found the first large
+world triangle using negative repeated UVs down to -7.375; prior ViRGE probes
+are almost entirely 0..1. The L10GL ViRGE path now rebases each repeated
+triangle by one common integer period per axis before texel scaling. The shift
+is exact under `GL_REPEAT` and preserves gradients, while raw texprobe callers
+remain unmodified through an opt-in backend flag. Unit tests pin the observed
+negative coordinates and unchanged deltas; silicon verification is pending.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.
