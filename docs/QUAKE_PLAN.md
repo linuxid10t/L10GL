@@ -709,7 +709,10 @@ completed the canonical 969 frames in 13.0 seconds (74.8 FPS). On the real
 ViRGE/DX, the full 640x480@60 discriminator run completed at 4.2 FPS and the
 user reported that lighting appears correct. This passes Q12's visual and
 hardware gates. The performance is acceptable under Q13's explicit
-single-digit, non-blocking criterion.
+single-digit, non-blocking criterion. After the automatic-default integration
+was pushed, a no-`-lm_4` follow-up printed `Q12: ViRGE RGBA alpha lightmaps
+active` on the target machine. This confirms that renderer detection selects
+the exact path without a command-line format override and fully closes Q12.
 
 ### Q13. Phase acceptance: playable Quake on the ViRGE
 

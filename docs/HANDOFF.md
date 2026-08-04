@@ -654,8 +654,10 @@ L10GL/virge; 0 restores original GLQuake format selection, 2 forces the coarse
 vertex fallback, and 3 forces the exact path for swrast testing. A forced
 320x240 swrast timedemo completed all 969 frames at 74.8 FPS. The real
 640x480@60 ViRGE/DX discriminator completed at 4.2 FPS with lighting reported
-correct, passing Q12's visual and hardware gates. Q13 interactive E1M1
-start-to-exit acceptance is now the next project step.
+correct, passing Q12's visual and hardware gates. A final run of the pushed
+default used no `-lm_4` override and printed `Q12: ViRGE RGBA alpha lightmaps
+active`, confirming automatic target-renderer selection. Q12 is closed; Q13
+interactive E1M1 start-to-exit acceptance is now the active project step.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
