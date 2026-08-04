@@ -633,6 +633,15 @@ and closes the repeat-coordinate and W-precision gates. The run used
 `GL_NEAREST`; Q11's remaining visual check is the normal `GL_LINEAR` path with
 the now-stable coordinates, followed by texture-correctness sign-off.
 
+*Linear-filter visual follow-up (2026-08-03): alias darkness is reference
+behavior.* The normal `GL_LINEAR` run remained stable, but distant enemies were
+reported black. This is not controlled by `r_fullbright`: original GLQuake
+uses that cvar for world surfaces, while `R_DrawAliasModel` always obtains
+enemy lighting from `R_LightPoint`, emits it with `glColor3f`, and selects
+`GL_MODULATE`. An L10GL swrast capture with the exact fullbright/linear timedemo
+settings reproduces the near-black distant monster. This closes the concern as
+map/alias lighting rather than ViRGE texture corruption.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE

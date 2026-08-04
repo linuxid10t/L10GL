@@ -622,6 +622,15 @@ perspective-precision diagnosis. That run deliberately retained `GL_NEAREST`;
 the last Q11 visual gate is a `GL_LINEAR` rerun to judge stable world/model
 texture correctness under the normal filtering path.
 
+The `GL_LINEAR` follow-up raised one apparent issue: enemies far from the
+camera appeared black. Local swrast capture of the same shareware demo with
+the exact `r_fullbright 1`, linear-filter settings reproduces a nearly black
+distant monster. Source inspection explains it: `r_fullbright` bypasses world
+lightmaps in `gl_rsurf.c`, but `R_DrawAliasModel` still samples `R_LightPoint`,
+sets per-vertex grayscale with `glColor3f`, and renders alias skins with
+`GL_MODULATE`. Treat this as original GLQuake alias lighting, not a ViRGE
+texture-path regression.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.
