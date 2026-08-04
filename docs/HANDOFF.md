@@ -616,6 +616,12 @@ at W=1, the normalizer now targets `[1,2)`. This recovers three more effective
 gradient bits with the same exact power-of-two quotient invariance. The refined
 target awaits silicon verification.
 
+The refined `[1,2)` run completed the full timedemo with no texture swimming
+on the target ViRGE/DX. This hardware-verifies the normalization and closes the
+perspective-precision diagnosis. That run deliberately retained `GL_NEAREST`;
+the last Q11 visual gate is a `GL_LINEAR` rerun to judge stable world/model
+texture correctness under the normal filtering path.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

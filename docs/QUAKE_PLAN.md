@@ -626,6 +626,13 @@ bits while remaining far inside the proven S12.19 and divider ranges. The
 common scale remains an exact power of two, and raw probes remain unchanged.
 The next run is the refined W-precision hardware gate.
 
+*Refined W-precision rerun (2026-08-03): PASSED.* With the per-triangle maximum
+normalized into `[1,2)`, the full timedemo completed with no texture swimming.
+This hardware-verifies perspective U/V/W interpolation for Quake's depth range
+and closes the repeat-coordinate and W-precision gates. The run used
+`GL_NEAREST`; Q11's remaining visual check is the normal `GL_LINEAR` path with
+the now-stable coordinates, followed by texture-correctness sign-off.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE
