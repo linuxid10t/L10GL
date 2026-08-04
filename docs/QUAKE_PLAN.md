@@ -668,6 +668,33 @@ compared against the swrast reference; dynamic lights (rockets, muzzle
 flashes) either work or are cleanly disabled by default with the cvar
 documented.
 
+*Implementation and decision (2026-08-03): vertex lighting selected; hardware
+gate pending.* The CPU-compositing spike counted 5,139 lightmapped surfaces in
+demo1/E1M3. At the shipping `gl_picmip 2`, surface rectangles including one
+guard texel per edge total 2,743,451 texels, or 5,486,902 RGB555 bytes before
+atlas packing. This exceeds the complete 4 MiB card, not merely the 2,351,104
+bytes left after synchronized 640x480 color/depth buffers. `gl_picmip 3` still
+requires an ideal 1,744,702 bytes before packing, while the already accepted
+non-lightmap asset set consumes most of the texture heap. A bounded LRU cache
+does not rescue the design with the Q4 upload contract: each cache miss would
+make `glTexSubImage2D` re-upload a complete 256x256 atlas. CPU compositing is
+therefore rejected for both capacity and upload-bandwidth reasons.
+
+The GPL GLQuake port now implements option 2. It retains the normal base
+texture, samples the CPU lightmap bilinearly at every brush-polygon vertex,
+emits the grayscale sample with `glColor3f`, and selects `GL_MODULATE`; the
+ViRGE Gouraud unit supplies the polygon interior. The original multiply pass
+and all GPU lightmap-atlas uploads are skipped, saving 13 128x128 textures on
+demo1. Lightstyle and dynamic-light changes still run `R_BuildLightMap` when
+`r_dynamic 1`, but consume the new CPU bytes directly without a VRAM upload.
+`gl_virge_lightmaps 1` is the default and activates only on `L10GL/virge`;
+value 0 restores the original path, and value 2 forces the approximation on
+swrast for comparison. The forced 640x480 swrast timedemo completed all 969
+frames in 25.9 seconds (37.4 FPS). Side-by-side captures confirm stable,
+navigable lighting with the expected coarse triangular gradients. This is a
+software/reference pass only; Q12 remains open until the real ViRGE run and
+dynamic-light visual check.
+
 ### Q13. Phase acceptance: playable Quake on the ViRGE
 
 Close Phase 7 with the end-to-end gate on the target machine.

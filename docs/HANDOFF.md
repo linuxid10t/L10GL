@@ -631,6 +631,23 @@ sets per-vertex grayscale with `glColor3f`, and renders alias skins with
 `GL_MODULATE`. Treat this as original GLQuake alias lighting, not a ViRGE
 texture-path regression.
 
+Q12 now has a selected implementation in the separate GPL GLQuake repository.
+The preferred CPU-composited surface cache was sized before coding: demo1/E1M3
+contains 5,139 lightmapped surfaces whose ideal picmip-2 rectangles total
+2,743,451 texels (5,486,902 RGB555 bytes) before atlas packing. That exceeds
+the whole 4 MiB card, and a smaller LRU would force a complete 256x256 upload
+on every miss through Q4's current whole-level backend update. The port
+therefore uses the planned vertex-lighting fallback: it bilinearly samples the
+CPU lightmap at brush vertices and sends the grayscale through GL_MODULATE for
+ViRGE Gouraud interpolation. It skips the second blend pass and every GPU
+lightmap upload; demo1 keeps 13 lightmap atlases only in system memory.
+`gl_virge_lightmaps 1` enables the path automatically on L10GL/virge, 0
+disables it, and 2 forces it on swrast. `r_dynamic 1` remains supported by
+rebuilding CPU lightmaps without uploads. The forced 640x480 swrast timedemo
+completed all 969 frames and visual comparison shows the expected coarser
+triangular gradients. The implementation is pushed only after its build and
+regression gates; Q12 still requires the real-hardware visual gate.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.
