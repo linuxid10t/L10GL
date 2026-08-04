@@ -601,6 +601,20 @@ and all gradients are unchanged—but moves negative/large coordinates into the
 silicon-proven range. Raw diagnostics retain their unreduced inputs. The next
 run is the repeat-coordinate hardware gate.
 
+*Repeat-coordinate rerun (2026-08-03): texture data recognizable; perspective
+precision pending hardware gate.* Rebasing made the textures recognizable,
+confirming that texture upload, binding, dimensions, and repeat selection are
+substantially coherent. Severe texture swimming still obscured final visual
+sign-off. A debugger trace of actual world draws measured reciprocal W values
+of approximately `0.0022` to `0.0040`, far below the `0.06` to `0.25` range
+used by the successful ViRGE perspective probes. In S12.19 that throws away
+most useful W-gradient precision. The L10GL ViRGE path now multiplies all
+three W values in a triangle by one common power of two, bringing the largest
+to `[1/8,1/4)` before forming U*W and V*W. Since numerator and denominator all
+receive the same scale, the perspective result is mathematically unchanged;
+only fixed-point precision improves. Raw diagnostics remain opt-out. The next
+run is the W-precision hardware gate.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE

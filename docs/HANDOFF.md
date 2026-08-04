@@ -598,6 +598,16 @@ is exact under `GL_REPEAT` and preserves gradients, while raw texprobe callers
 remain unmodified through an opt-in backend flag. Unit tests pin the observed
 negative coordinates and unchanged deltas; silicon verification is pending.
 
+The repeat-coordinate rerun made textures recognizable, but severe swimming
+prevented correctness sign-off. A local debugger trace then captured actual
+world reciprocal-W inputs around 0.0022-0.0040, versus roughly 0.06-0.25 in
+the successful ViRGE perspective probes. The production ViRGE path now applies
+one common power-of-two scale per triangle when its largest W is below 1/8,
+placing that value in `[1/8,1/4)` before U/V premultiplication. Scaling U*W,
+V*W, and W equally preserves the perspective quotient exactly while retaining
+far more S12.19 gradient precision. Raw diagnostics leave the opt-in flag zero;
+the next silicon run is the W-precision gate.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

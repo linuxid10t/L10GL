@@ -303,6 +303,7 @@ static int virge_be_init(struct l10gl_ctx *ctx, int w, int h, int bpp)
     priv->hw.tex_dbg_ufrac = -1;   /* default: per-path (non-persp 27-s, persp 12) */
     priv->hw.tex_dbg_nopremult = 0;/* default: U,V pre-mult by W ON (perspective-correct) */
     priv->hw.tex_uv_rebase = 1;    /* keep GL_REPEAT UVs in silicon-proven range */
+    priv->hw.tex_w_normalize = 1;  /* preserve precision for Quake's ~0.002 world W */
     priv->hw.tex_dbg_nopersp = 0;  /* DEFAULT perspective: the persp divide is FIXED
                                     * on real DX (texel = 128*TUS/TWS, silicon
                                     * texprobe TEST 16/17 2026-07-09) -- persp ufrac

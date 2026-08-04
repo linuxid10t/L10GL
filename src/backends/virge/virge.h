@@ -756,6 +756,11 @@ struct virge_ctx {
      * diagnostics that intentionally exercise out-of-range hardware values. */
     int tex_uv_rebase;
 
+    /* Raise very small homogeneous W values into the fixed-point range proven
+     * by texprobe. The L10GL backend enables this; raw diagnostics leave it
+     * zero so their exact W inputs still reach the registers. */
+    int tex_w_normalize;
+
     /* DEBUG OVERRIDE for the texture-perspective U/V scale hunt (texprobe v7).
      * The driver normally encodes U/V with frac_bits = 27 - s_val (S(4+s).(27-s),
      * the datasheet format, correct for the NON-perspective path). But the
@@ -951,6 +956,11 @@ void virge_texture_scale_uv(float *u, float *v, uint32_t width,
  * exact under GL_REPEAT because it preserves every edge delta and fractional
  * coordinate while moving negative/large values into a small positive range. */
 void virge_rebase_repeat_axis(float *a, float *b, float *c);
+
+/* Return a common power-of-two scale that brings a triangle's largest
+ * positive W to at least 1/8. Multiplying W, U*W, and V*W by this same value
+ * leaves perspective division unchanged while preserving fixed-point detail. */
+float virge_perspective_w_scale(float a, float b, float c);
 
 /*
  * virge_upload_texture - Copy texture data into offscreen VRAM.

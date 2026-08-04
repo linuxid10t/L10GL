@@ -2104,6 +2104,22 @@ void virge_rebase_repeat_axis(float *a, float *b, float *c)
     *c -= period;
 }
 
+float virge_perspective_w_scale(float a, float b, float c)
+{
+    float maximum = fmaxf(a, fmaxf(b, c));
+    int exponent;
+
+    if (!(maximum > 0.0f) || !isfinite(maximum) || maximum >= 0.125f)
+        return 1.0f;
+
+    /* maximum = fraction * 2^exponent, with fraction in [0.5, 1).
+     * Moving that fraction to exponent -2 produces [1/8, 1/4), squarely
+     * inside the W range already proven by the hardware texture probes. */
+    (void)frexpf(maximum, &exponent);
+    float scale = ldexpf(1.0f, -2 - exponent);
+    return isfinite(scale) ? scale : 1.0f;
+}
+
 void virge_upload_texture(struct virge_ctx *ctx, uint32_t dest,
                            const void *data, size_t size)
 {
@@ -2250,6 +2266,12 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
      * gradient setup, so the gradients below are of U*W. Skipped for non-persp
      * (no divide) and for divide-isolation probes (tex_dbg_nopremult). */
     if (!ctx->tex_dbg_nopersp && !ctx->tex_dbg_nopremult) {
+        if (ctx->tex_w_normalize) {
+            float w_scale = virge_perspective_w_scale(v0.w, v1.w, v2.w);
+            v0.w *= w_scale;
+            v1.w *= w_scale;
+            v2.w *= w_scale;
+        }
         v0.u *= v0.w; v0.v *= v0.w;
         v1.u *= v1.w; v1.v *= v1.w;
         v2.u *= v2.w; v2.v *= v2.w;

@@ -650,6 +650,22 @@ static void test_texture_replication(void)
         EXPECT(a - b == ab && a - c == ac,
                "repeat rebasing preserves triangle coordinate deltas");
     }
+
+    /* GLQuake world W is about 0.002-0.004. A common power-of-two lift moves
+     * it into the hardware-proven range without changing any vertex ratio. */
+    {
+        float a = 0.00220151f, b = 0.00230395f, c = 0.00268439f;
+        float scale = virge_perspective_w_scale(a, b, c);
+
+        EXPECT(scale == 64.0f,
+               "small Quake W selects an exact power-of-two scale");
+        EXPECT(c * scale >= 0.125f && c * scale < 0.25f,
+               "normalized Quake W enters the proven perspective range");
+        EXPECT((a * scale) / (c * scale) == a / c,
+               "common W normalization preserves perspective ratios");
+        EXPECT(virge_perspective_w_scale(0.17f, 0.20f, 0.25f) == 1.0f,
+               "already-proven W values remain unchanged");
+    }
 }
 
 #undef REP_TEXEL
@@ -671,6 +687,6 @@ int main(void)
     if (failed)
         return 1;
     printf("test-virge-mode: PASS (modes, CRTC, FIFO/state cache, presentation, "
-           "triangle gates, texture replication/scaling/rebasing, texture heap)\n");
+           "triangle gates, texture replication/scaling/rebasing/W, texture heap)\n");
     return 0;
 }
