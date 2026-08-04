@@ -377,10 +377,12 @@ expansion and error behavior at the GL layer, and `test_lightmap_multiply`
 renders a real two-pass checker×gradient frame on swrast and pins it
 against analytic values for the RGBA multiply (`fb = base·lm`), the
 luminance multiply (`fb = base·(1−lm)`), and a `glTexSubImage2D` dynamic
-lightmap update that visibly modulates the lit world. DEFERRED — ViRGE has
-no `GL_ZERO`/`GL_SRC_COLOR` blend in silicon; the lit-world strategy there
-(CPU lightmap compositing vs. vertex-lighting approximation) is Q12, and
-`GL_RGBA4` 16-bit lightmap storage is Q10.
+lightmap update that visibly modulates the lit world. Q12 adds a fourth
+case for GLQuake's actual black-RGB/darkness-alpha layout, numeric internal
+format 4/ARGB4444, and source-alpha blending (`fb = base·(1−alpha)`). ViRGE
+cannot perform the general `GL_ZERO`/`GL_SRC_COLOR` blend, but this fourth
+identity is exact for Quake's grayscale lightmaps and is now verified on
+silicon. `GL_RGBA4` 16-bit lightmap storage remains part of Q10.
 
 ### Q8. Texture lifetime and delete semantics
 
@@ -644,10 +646,11 @@ map/alias lighting rather than ViRGE texture corruption.
 
 ### Q12. ViRGE lightmap strategy
 
-The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE
-silicon — blending is fixed-function source-alpha only (`PLAN.md`
-capability table; DB019-B §15.4.8.5). Decide the lit-world approach with
-a spike per option, in this order of preference:
+The general color-factor multiply blend does not exist in ViRGE silicon —
+blending is fixed-function source-alpha only (`PLAN.md` capability table;
+DB019-B §15.4.8.5). Q12 began with a spike per option in this order of
+preference; the decision record below includes the exact source-alpha identity
+discovered during hardware validation:
 
 1. **CPU lightmap compositing** (the vQuake approach): pre-multiply
    lightmaps into the affected surface textures on the CPU and upload the
@@ -668,9 +671,9 @@ compared against the swrast reference; dynamic lights (rockets, muzzle
 flashes) either work or are cleanly disabled by default with the cvar
 documented.
 
-*Implementation and decision (2026-08-03): vertex lighting selected; hardware
-gate pending.* The CPU-compositing spike counted 5,139 lightmapped surfaces in
-demo1/E1M3. At the shipping `gl_picmip 2`, surface rectangles including one
+*Implementation and decision (2026-08-04): RGBA alpha-darkening selected and
+hardware-verified.* The CPU-compositing spike counted 5,139 lightmapped
+surfaces in demo1/E1M3. At the shipping `gl_picmip 2`, rectangles including one
 guard texel per edge total 2,743,451 texels, or 5,486,902 RGB555 bytes before
 atlas packing. This exceeds the complete 4 MiB card, not merely the 2,351,104
 bytes left after synchronized 640x480 color/depth buffers. `gl_picmip 3` still
@@ -680,20 +683,33 @@ does not rescue the design with the Q4 upload contract: each cache miss would
 make `glTexSubImage2D` re-upload a complete 256x256 atlas. CPU compositing is
 therefore rejected for both capacity and upload-bandwidth reasons.
 
-The GPL GLQuake port now implements option 2. It retains the normal base
-texture, samples the CPU lightmap bilinearly at every brush-polygon vertex,
-emits the grayscale sample with `glColor3f`, and selects `GL_MODULATE`; the
-ViRGE Gouraud unit supplies the polygon interior. The original multiply pass
-and all GPU lightmap-atlas uploads are skipped, saving 13 128x128 textures on
-demo1. Lightstyle and dynamic-light changes still run `R_BuildLightMap` when
-`r_dynamic 1`, but consume the new CPU bytes directly without a VRAM upload.
-`gl_virge_lightmaps 1` is the default and activates only on `L10GL/virge`;
-value 0 restores the original path, and value 2 forces the approximation on
-swrast for comparison. The forced 640x480 swrast timedemo completed all 969
-frames in 25.9 seconds (37.4 FPS). Side-by-side captures confirm stable,
-navigable lighting with the expected coarse triangular gradients. This is a
-software/reference pass only; Q12 remains open until the real ViRGE run and
-dynamic-light visual check.
+The GPL GLQuake port first implemented option 2. It samples the CPU lightmap
+bilinearly at every brush-polygon vertex, emits the grayscale sample through
+`GL_MODULATE`, and lets the ViRGE Gouraud unit fill the polygon interior. A
+forced 640x480 swrast timedemo completed all 969 frames in 25.9 seconds (37.4
+FPS). The real ViRGE/DX then completed the full timedemo at 7.7 FPS, proving
+the mechanism and dynamic CPU-lightmap updates, but the user reported the
+lighting as "very triangular." It fails the quality comparison and remains
+only an optional diagnostic fallback.
+
+The decisive follow-up found a fourth, exact option in GLQuake's existing
+RGBA lightmap encoding. `R_BuildLightMap` writes black RGB and darkness to
+alpha. With `GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA`, ViRGE's supported fixed
+blend evaluates `black*A + framebuffer*(1-A)`, exactly reproducing grayscale
+lightmap multiplication. Numeric internal format 4 becomes ARGB4444 in L10GL,
+so the hardware consumes texture alpha without new backend features. Dynamic
+lights and animated lightstyles keep the ordinary atlas rebuild and
+`glTexSubImage2D` path under `r_dynamic 1`.
+
+`gl_virge_lightmaps 1` is the default and selects exact RGBA alpha lightmaps
+only on `L10GL/virge`; value 0 restores original GLQuake format selection,
+value 2 forces the coarse vertex fallback on any renderer, and value 3 forces
+the exact mode for swrast/reference testing. A forced 320x240 swrast run
+completed the canonical 969 frames in 13.0 seconds (74.8 FPS). On the real
+ViRGE/DX, the full 640x480@60 discriminator run completed at 4.2 FPS and the
+user reported that lighting appears correct. This passes Q12's visual and
+hardware gates. The performance is acceptable under Q13's explicit
+single-digit, non-blocking criterion.
 
 ### Q13. Phase acceptance: playable Quake on the ViRGE
 

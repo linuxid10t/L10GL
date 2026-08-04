@@ -631,22 +631,31 @@ sets per-vertex grayscale with `glColor3f`, and renders alias skins with
 `GL_MODULATE`. Treat this as original GLQuake alias lighting, not a ViRGE
 texture-path regression.
 
-Q12 now has a selected implementation in the separate GPL GLQuake repository.
+Q12 now has a hardware-verified exact implementation in the separate GPL
+GLQuake repository.
 The preferred CPU-composited surface cache was sized before coding: demo1/E1M3
 contains 5,139 lightmapped surfaces whose ideal picmip-2 rectangles total
 2,743,451 texels (5,486,902 RGB555 bytes) before atlas packing. That exceeds
 the whole 4 MiB card, and a smaller LRU would force a complete 256x256 upload
-on every miss through Q4's current whole-level backend update. The port
-therefore uses the planned vertex-lighting fallback: it bilinearly samples the
-CPU lightmap at brush vertices and sends the grayscale through GL_MODULATE for
-ViRGE Gouraud interpolation. It skips the second blend pass and every GPU
-lightmap upload; demo1 keeps 13 lightmap atlases only in system memory.
-`gl_virge_lightmaps 1` enables the path automatically on L10GL/virge, 0
-disables it, and 2 forces it on swrast. `r_dynamic 1` remains supported by
-rebuilding CPU lightmaps without uploads. The forced 640x480 swrast timedemo
-completed all 969 frames and visual comparison shows the expected coarser
-triangular gradients. The implementation is pushed only after its build and
-regression gates; Q12 still requires the real-hardware visual gate.
+on every miss through Q4's current whole-level backend update.
+
+The planned vertex-lighting fallback was implemented and completed the real
+ViRGE timedemo at 7.7 FPS, but its Gouraud interpolation was reported as very
+triangular and failed the visual-quality gate. The selected path instead uses
+GLQuake's existing RGBA lightmap representation: RGB is black and alpha is
+darkness, so ViRGE's fixed source-alpha blend computes
+`black*A + framebuffer*(1-A)`, exactly reproducing the missing grayscale
+multiply. L10GL's numeric internal format 4 is ARGB4444, which selects texture
+alpha in the hardware blend unit. Normal dynamic-light atlas updates remain
+active with `r_dynamic 1`.
+
+`gl_virge_lightmaps 1` now selects this exact path automatically on
+L10GL/virge; 0 restores original GLQuake format selection, 2 forces the coarse
+vertex fallback, and 3 forces the exact path for swrast testing. A forced
+320x240 swrast timedemo completed all 969 frames at 74.8 FPS. The real
+640x480@60 ViRGE/DX discriminator completed at 4.2 FPS with lighting reported
+correct, passing Q12's visual and hardware gates. Q13 interactive E1M1
+start-to-exit acceptance is now the next project step.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
@@ -656,11 +665,12 @@ bounded subset of the C-items — roughly a dozen missing entry points plus
 rectangular power-of-two textures, alpha test, `glTexSubImage2D`, texture
 environment modes, and real `glDeleteTextures` storage release. The phase's
 headline milestone is `timedemo demo1` completing correctly on swrast
-(item Q9); only then does the hardware stage start, whose long pole is the
-lightmap multiply blend the ViRGE cannot express in silicon (Q12 decides
-between vQuake-style CPU compositing, vertex lighting, or deferring to
-Phase 8 C10). The GLQuake port itself is GPL-2.0 and lives in a separate
-repository, per the 86Box license rule; this tree gains only API features
+(item Q9); only then does the hardware stage start. Its expected long pole,
+the unavailable general lightmap multiply blend, was resolved in Q12 with
+GLQuake's exact black-RGB/darkness-alpha source-blend identity after rejecting
+CPU compositing for capacity and vertex lighting for quality. The GLQuake port
+itself is GPL-2.0 and lives in a separate repository, per the 86Box license
+rule; this tree gains only API features
 and tests. Every Q-item is written to feed, not fork, its Phase 8 C-item.
 
 ```

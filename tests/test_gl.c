@@ -1168,14 +1168,16 @@ static void draw_lightmap_two_pass(GLuint base_tex, GLuint lm_tex,
 /* Q7: end-to-end lightmap multiply on swrast. A 4x4 framebuffer is painted in
  * two passes over a full-screen quad; each 2x2 NEAREST texel covers a 2x2 fb
  * block, so fb(px,py) reflects base[col=px/2,row=(3-py)/2] combined with the
- * lightmap texel at the same block. Three cases are pinned against analytic
+ * lightmap texel at the same block. Four cases are pinned against analytic
  * values:
  *   RGBA lightmap,    GL_ZERO/GL_SRC_COLOR           -> fb = base*lm/255
  *   luminance lightmap, GL_ZERO/GL_ONE_MINUS_SRC_COLOR -> fb = base*(1-lm/255)
  *   glTexSubImage2D the luminance lightmap to 0, re-render -> fb = base
- * The last demonstrates Q4 dynamic lightmap updates visibly modulating the lit
- * world, exercising the GL_LUMINANCE format through upload, sample, blend, and
- * subimage update on the real swrast rasterizer. */
+ *   black RGBA with darkness alpha, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+ *       -> fb = base*(1-alpha), the ViRGE-native Q12 identity
+ * The third demonstrates Q4 dynamic lightmap updates visibly modulating the
+ * lit world. The fourth matches GLQuake's -lm_4 byte layout and numeric
+ * internal format 4, including the target ARGB4444 quantization. */
 static void test_lightmap_multiply(void)
 {
     /* base checker (RGBA): white,gray / gray,white. */
@@ -1190,6 +1192,10 @@ static void test_lightmap_multiply(void)
     static const GLubyte lm_rgba[16] = {
          64,  64,  64, 255,  192, 192, 192, 255,
          64,  64,  64, 255,  192, 192, 192, 255,
+    };
+    static const GLubyte lm_alpha_dark[16] = {
+          0,   0,   0,  64,    0,   0,   0, 192,
+          0,   0,   0,  64,    0,   0,   0, 192,
     };
     static const GLubyte lm_lum[8] = { 64, 192, 0, 0,  64, 192, 0, 0 };
     static const GLubyte lm_zero[8] = { 0, 0, 0, 0,  0, 0, 0, 0 };
@@ -1257,6 +1263,18 @@ static void test_lightmap_multiply(void)
     l10glSwapBuffers();
     expect_int("lightmap subimage render no error", glGetError(), GL_NO_ERROR);
 
+    /* Scenario D: GLQuake -lm_4 stores black RGB and darkness in alpha.
+     * ViRGE's fixed source-alpha blend then computes an exact grayscale
+     * multiply without GL_ZERO/GL_SRC_COLOR support. Numeric internal format
+     * 4 deliberately exercises the ARGB4444 storage used on hardware. */
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, 4, 2, 2, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, lm_alpha_dark);
+    draw_lightmap_two_pass(base_tex, lm_tex,
+                           GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    l10glSwapBuffers();
+    expect_int("lightmap alpha-dark render no error", glGetError(), GL_NO_ERROR);
+
     l10glMakeCurrent(NULL);
     l10gl_destroy(&ctx);
     unsetenv("L10GL_SWRAST_DUMP");
@@ -1302,7 +1320,23 @@ static void test_lightmap_multiply(void)
                    255, 255, 255);
     }
 
-    for (int i = 0; i < 3; i++) {
+    /* Scenario D: ARGB4444 maps alpha 64/192 to 4/15 and 12/15. */
+    snprintf(path, sizeof(path), "%s/lm0003.ppm", directory);
+    if (read_ppm_4x4(path, frame) != 0) {
+        fprintf(stderr, "test-gl: cannot read alpha-dark lightmap frame\n");
+        failures++;
+    } else {
+        expect_rgb("lightmap alpha block00", &frame[(3 * 4 + 0) * 3],
+                   187, 187, 187);
+        expect_rgb("lightmap alpha block10", &frame[(2 * 4 + 2) * 3],
+                   26, 26, 26);
+        expect_rgb("lightmap alpha block01", &frame[(0 * 4 + 1) * 3],
+                   94, 94, 94);
+        expect_rgb("lightmap alpha block11", &frame[(1 * 4 + 3) * 3],
+                   51, 51, 51);
+    }
+
+    for (int i = 0; i < 4; i++) {
         snprintf(path, sizeof(path), "%s/lm%04d.ppm", directory, i);
         unlink(path);
     }
