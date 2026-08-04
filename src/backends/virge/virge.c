@@ -2109,14 +2109,14 @@ float virge_perspective_w_scale(float a, float b, float c)
     float maximum = fmaxf(a, fmaxf(b, c));
     int exponent;
 
-    if (!(maximum > 0.0f) || !isfinite(maximum) || maximum >= 0.125f)
+    if (!(maximum > 0.0f) || !isfinite(maximum) || maximum >= 1.0f)
         return 1.0f;
 
     /* maximum = fraction * 2^exponent, with fraction in [0.5, 1).
-     * Moving that fraction to exponent -2 produces [1/8, 1/4), squarely
-     * inside the W range already proven by the hardware texture probes. */
+     * Moving that fraction to exponent 1 produces [1, 2). TEST 16 proved W
+     * through 128 and TEST 17 proved the production divide exactly at W=1. */
     (void)frexpf(maximum, &exponent);
-    float scale = ldexpf(1.0f, -2 - exponent);
+    float scale = ldexpf(1.0f, 1 - exponent);
     return isfinite(scale) ? scale : 1.0f;
 }
 

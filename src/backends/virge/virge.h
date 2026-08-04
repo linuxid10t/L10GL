@@ -958,8 +958,8 @@ void virge_texture_scale_uv(float *u, float *v, uint32_t width,
 void virge_rebase_repeat_axis(float *a, float *b, float *c);
 
 /* Return a common power-of-two scale that brings a triangle's largest
- * positive W to at least 1/8. Multiplying W, U*W, and V*W by this same value
- * leaves perspective division unchanged while preserving fixed-point detail. */
+ * positive W into [1,2). Multiplying W, U*W, and V*W by this same value leaves
+ * perspective division unchanged while preserving fixed-point detail. */
 float virge_perspective_w_scale(float a, float b, float c);
 
 /*

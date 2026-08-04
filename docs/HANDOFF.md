@@ -608,6 +608,14 @@ V*W, and W equally preserves the perspective quotient exactly while retaining
 far more S12.19 gradient precision. Raw diagnostics leave the opt-in flag zero;
 the next silicon run is the W-precision gate.
 
+That first W-normalized run substantially reduced swimming, confirming the
+fixed-point precision diagnosis, but some movement remained. The initial
+`[1/8,1/4)` target was deliberately conservative. Since texprobe TEST 16
+matched W values through 128 and TEST 17 matched the production divide exactly
+at W=1, the normalizer now targets `[1,2)`. This recovers three more effective
+gradient bits with the same exact power-of-two quotient invariance. The refined
+target awaits silicon verification.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

@@ -615,6 +615,17 @@ receive the same scale, the perspective result is mathematically unchanged;
 only fixed-point precision improves. Raw diagnostics remain opt-out. The next
 run is the W-precision hardware gate.
 
+*First W-precision rerun (2026-08-03): substantially reduced swimming; target
+precision refinement pending.* Raising world W into `[1/8,1/4)` substantially
+reduced the visible texture movement, confirming fixed-point perspective
+quantization as the remaining cause. It did not eliminate the movement. The
+older silicon discriminator swept constant W through 128, and the production
+divide/ufrac combination was matched exactly at W=1. The normalizer therefore
+now targets `[1,2)` instead, recovering three additional effective fractional
+bits while remaining far inside the proven S12.19 and divider ranges. The
+common scale remains an exact power of two, and raw probes remain unchanged.
+The next run is the refined W-precision hardware gate.
+
 ### Q12. ViRGE lightmap strategy
 
 The multiply blend (`GL_ZERO, GL_SRC_COLOR`) does not exist in ViRGE

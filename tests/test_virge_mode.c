@@ -657,14 +657,16 @@ static void test_texture_replication(void)
         float a = 0.00220151f, b = 0.00230395f, c = 0.00268439f;
         float scale = virge_perspective_w_scale(a, b, c);
 
-        EXPECT(scale == 64.0f,
+        EXPECT(scale == 512.0f,
                "small Quake W selects an exact power-of-two scale");
-        EXPECT(c * scale >= 0.125f && c * scale < 0.25f,
+        EXPECT(c * scale >= 1.0f && c * scale < 2.0f,
                "normalized Quake W enters the proven perspective range");
         EXPECT((a * scale) / (c * scale) == a / c,
                "common W normalization preserves perspective ratios");
-        EXPECT(virge_perspective_w_scale(0.17f, 0.20f, 0.25f) == 1.0f,
-               "already-proven W values remain unchanged");
+        EXPECT(virge_perspective_w_scale(0.17f, 0.20f, 0.25f) == 4.0f,
+               "moderate W receives the same exact normalization");
+        EXPECT(virge_perspective_w_scale(1.0f, 1.5f, 2.0f) == 1.0f,
+               "W values already at or above the target remain unchanged");
     }
 }
 
