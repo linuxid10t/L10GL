@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd)
+fixture=$(mktemp -d)
+trap 'rm -rf -- "$fixture"' EXIT
+
+quake_root="$fixture/L10GL-Quake"
+winquake="$quake_root/WinQuake"
+pak="$winquake/id1/pak0.pak"
+binary="$winquake/glquake.l10gl"
+runner="$fixture/l10gl-run"
+runner_log="$fixture/runner.log"
+output="$fixture/results"
+
+mkdir -p "$winquake/id1"
+printf 'PACK' > "$pak"
+truncate -s 18689235 "$pak"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$binary"
+chmod +x "$binary"
+
+cat > "$runner" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%q ' "$@" >> "$L10GL_Q13_RUNNER_LOG"
+printf '\n' >> "$L10GL_Q13_RUNNER_LOG"
+printf '%s\n' 'l10gl-run: selected virge at 0000:01:00.0'
+printf '%s\n' 'GL_RENDERER: L10GL/virge'
+printf '%s\n' 'Video mode 640x480 (16bpp) initialized.'
+printf '%s\n' 'S3 ViRGE: P6 native mode: 640x480@60 RGB555, exact built-in timing'
+printf '%s\n' 'S3 ViRGE: presentation: synchronized double buffer (L10GL_VSYNC=1)'
+printf '%s\n' 'Q12: ViRGE RGBA alpha lightmaps active'
+
+case " $* " in
+    *' +map e1m1 '*)
+        printf '%s\n' 'SpawnServer: e1m1'
+        printf '%s\n' 'SpawnServer: e1m2'
+        ;;
+    *' +timedemo demo1 '*)
+        printf '%s\n' '969 frames   230.7 seconds 4.2 fps'
+        printf '%s\n' 'Received signal 2, exiting...'
+        ;;
+    *)
+        printf '%s\n' 'fixture: missing run discriminator' >&2
+        exit 2
+        ;;
+esac
+EOF
+chmod +x "$runner"
+
+output_log=$(printf '%s\n' yes yes yes yes | \
+    L10GL_Q13_RUNNER_LOG="$runner_log" \
+    "$repo_root/tools/quake-virge-gate" \
+        --quake-dir "$quake_root" --output-dir "$output" --runner "$runner" \
+        --skip-fetch --skip-build 2>&1)
+
+grep -Fq 'PASS: E1M1 transitioned to E1M2' <<< "$output_log"
+grep -Fq 'PASS: demo1 reported 969 frames in 230.7s (4.2 fps)' <<< "$output_log"
+grep -Fq 'Q13 Phase 7 ViRGE acceptance: PASS' "$output/q13-report.txt"
+grep -Fq 'timedemo demo1: 969 frames in 230.7 seconds (4.2 fps)' \
+    "$output/q13-report.txt"
+grep -Fq -- '-width 640 -height 480 -bpp 16' "$runner_log"
+grep -Fq -- 'L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1' "$runner_log"
+grep -Fq -- '+map e1m1' "$runner_log"
+grep -Fq -- '+timedemo demo1' "$runner_log"
+[[ -L "$output/run/id1/pak0.pak" ]]
+
+printf 'quake virge gate fixture test: PASS\n'

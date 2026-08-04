@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+#
+# quake-virge-gate -- Phase 7 Q13 interactive ViRGE acceptance gate.
+#
+# The gate keeps the GPL Quake checkout and shareware data outside this MIT
+# repository.  It stages only a pak0.pak symlink and generated configuration
+# under ignored out/, then launches both hardware runs through l10gl-run.
+
+set -euo pipefail
+
+readonly PAK0_SIZE=18689235
+readonly CANONICAL_DEMO1_FRAMES=969
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+quake_dir="${L10GL_QUAKE_DIR:-$repo_root/../L10GL-Quake}"
+runner="${L10GL_RUNNER:-$repo_root/tools/l10gl-run}"
+output_dir=""
+skip_fetch=0
+skip_build=0
+
+usage() {
+    cat <<EOF
+usage: sudo tools/quake-virge-gate [options]
+
+Run the complete Phase 7 Q13 hardware acceptance sequence on a ViRGE:
+  1. play E1M1 through its exit, enter E1M2, then quit normally;
+  2. run timedemo demo1, note its result, then stop with Ctrl-C.
+
+The script verifies renderer, mode, Q12 lighting selection, level transition,
+timedemo frame count, and Ctrl-C handling.  It asks the operator to attest the
+visual and console-restoration checks and writes q13-report.txt with the logs.
+Run this as the first graphics workload after a fresh boot.
+
+Options:
+  --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
+  --output-dir PATH  new result directory (default: a new out/quake-q13.*)
+  --runner PATH      l10gl-run-compatible launcher (default: tools/l10gl-run)
+  --skip-fetch       require an already-verified WinQuake/id1/pak0.pak
+  --skip-build       require an existing glquake.l10gl binary
+  -h, --help         show this help
+
+Environment:
+  L10GL_QUAKE_DIR, L10GL_QUAKE_BIN, and L10GL_RUNNER provide the matching
+  overrides.  L10GL_BACKEND is always forced to virge for both runs.
+EOF
+}
+
+log() { printf 'quake-virge-gate: %s\n' "$*" >&2; }
+die() { log "error: $*"; exit 1; }
+
+pak_is_valid() {
+    local pak=$1
+
+    [[ -f "$pak" ]] || return 1
+    [[ "$(stat -c%s "$pak")" == "$PAK0_SIZE" ]] || return 1
+    [[ "$(head -c4 "$pak")" == "PACK" ]] || return 1
+}
+
+confirm() {
+    local prompt=$1
+    local answer
+
+    printf 'quake-virge-gate: %s [y/N] ' "$prompt" >&2
+    IFS= read -r answer || return 1
+    case "${answer,,}" in
+        y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+require_log_line() {
+    local log_file=$1
+    local pattern=$2
+    local description=$3
+
+    grep -Fq "$pattern" "$log_file" ||
+        die "$description was not recorded; see $log_file"
+}
+
+reject_hardware_errors() {
+    local log_file=$1
+
+    if grep -Eq 'S3 ViRGE: .*timed out|ViRGE: out of VRAM' "$log_file"; then
+        die "hardware timeout or texture OOM was recorded; see $log_file"
+    fi
+}
+
+git_revision() {
+    local worktree=$1
+    local revision
+
+    revision="$(git -c safe.directory="$worktree" -C "$worktree" \
+        rev-parse HEAD 2>/dev/null)" || {
+        printf 'unknown\n'
+        return
+    }
+    if [[ -n "$(git -c safe.directory="$worktree" -C "$worktree" \
+        status --porcelain 2>/dev/null)" ]]; then
+        revision="${revision}-dirty"
+    fi
+    printf '%s\n' "$revision"
+}
+
+run_quake() {
+    local log_file=$1
+    shift
+    local -a statuses
+
+    set +e
+    (
+        cd "$run_root"
+        L10GL_BACKEND=virge "$runner" -- \
+            env L10GL_BACKEND=virge \
+            L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1 \
+            L10GL_AUTOEXEC=0 L10GL_TRI_REUSE=0 \
+            stdbuf -oL -eL "$binary" \
+            -basedir "$run_root" -nosound -nocdaudio -noudp -nojoy \
+            -width 640 -height 480 -bpp 16 +developer 1 "$@"
+    ) 2>&1 | tee "$log_file"
+    statuses=("${PIPESTATUS[@]}")
+    set -e
+
+    [[ ${statuses[1]} -eq 0 ]] || die "could not write $log_file"
+    return "${statuses[0]}"
+}
+
+verify_common_run() {
+    local log_file=$1
+
+    require_log_line "$log_file" 'l10gl-run: selected virge at ' \
+        'ViRGE launcher selection'
+    require_log_line "$log_file" 'GL_RENDERER: L10GL/virge' \
+        'L10GL ViRGE renderer initialization'
+    require_log_line "$log_file" 'Video mode 640x480 (16bpp) initialized.' \
+        '640x480x16 video initialization'
+    require_log_line "$log_file" 'P6 native mode: 640x480@60 RGB555' \
+        '640x480@60 native timing'
+    require_log_line "$log_file" \
+        'presentation: synchronized double buffer (L10GL_VSYNC=1)' \
+        'synchronized presentation'
+    require_log_line "$log_file" 'Q12: ViRGE RGBA alpha lightmaps active' \
+        'automatic Q12 exact-lightmap selection'
+    reject_hardware_errors "$log_file"
+}
+
+while (($#)); do
+    case "$1" in
+    --quake-dir)
+        (($# >= 2)) || die "--quake-dir needs a path"
+        quake_dir=$2
+        shift 2
+        ;;
+    --output-dir)
+        (($# >= 2)) || die "--output-dir needs a path"
+        output_dir=$2
+        shift 2
+        ;;
+    --runner)
+        (($# >= 2)) || die "--runner needs a path"
+        runner=$2
+        shift 2
+        ;;
+    --skip-fetch) skip_fetch=1; shift ;;
+    --skip-build) skip_build=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown option: $1 (use --help)" ;;
+    esac
+done
+
+[[ -d "$quake_dir/WinQuake" ]] || die "not an L10GL-Quake checkout: $quake_dir"
+quake_dir="$(cd "$quake_dir" && pwd)"
+[[ -x "$runner" ]] || die "launcher is not executable: $runner"
+runner="$(cd "$(dirname "$runner")" && pwd)/$(basename "$runner")"
+
+pak="$quake_dir/WinQuake/id1/pak0.pak"
+if ! pak_is_valid "$pak"; then
+    [[ $skip_fetch -eq 0 ]] || die "missing or invalid shareware pak: $pak"
+    fetcher="$quake_dir/tools/fetch-shareware-data.sh"
+    [[ -x "$fetcher" ]] || die "shareware fetcher is not executable: $fetcher"
+    log "fetching and verifying shareware pak0.pak"
+    "$fetcher"
+    pak_is_valid "$pak" || die "fetcher did not produce a valid pak0.pak"
+fi
+
+binary="${L10GL_QUAKE_BIN:-$quake_dir/WinQuake/glquake.l10gl}"
+if [[ $skip_build -eq 0 ]]; then
+    log "building GLQuake against $repo_root/libl10gl.a"
+    make -C "$quake_dir/WinQuake" -f Makefile.l10gl "L10GLDIR=$repo_root"
+fi
+[[ -x "$binary" ]] || die "build did not produce executable: $binary"
+binary="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
+
+if [[ -z "$output_dir" ]]; then
+    mkdir -p "$repo_root/out"
+    output_dir="$(mktemp -d "$repo_root/out/quake-q13.XXXXXX")"
+else
+    mkdir "$output_dir" ||
+        die "output directory must not already exist: $output_dir"
+    output_dir="$(cd "$output_dir" && pwd)"
+fi
+
+run_root="$output_dir/run"
+mkdir -p "$run_root/id1"
+ln -s "$pak" "$run_root/id1/pak0.pak"
+
+play_log="$output_dir/play.log"
+timedemo_log="$output_dir/timedemo.log"
+report="$output_dir/q13-report.txt"
+started_at="$(date --iso-8601=seconds)"
+l10gl_commit="$(git_revision "$repo_root")"
+quake_commit="$(git_revision "$quake_dir")"
+
+log "results: $output_dir"
+confirm 'Is this the first graphics run after a fresh boot?' ||
+    die 'fresh-boot precondition was not confirmed'
+
+cat >&2 <<'EOF'
+quake-virge-gate: PLAY RUN
+  E1M1 will start directly. Play from spawn through the level exit and wait
+  for E1M2 to render. Check world lighting and at least one dynamic light
+  (a muzzle flash or projectile), then open the console and enter: quit
+EOF
+
+run_quake "$play_log" +map e1m1 ||
+    die "play run did not exit cleanly; see $play_log"
+verify_common_run "$play_log"
+require_log_line "$play_log" 'SpawnServer: e1m1' 'E1M1 start'
+require_log_line "$play_log" 'SpawnServer: e1m2' 'E1M1-to-E1M2 transition'
+if grep -Fq 'Received signal ' "$play_log"; then
+    die "play run used signal teardown instead of normal quit; see $play_log"
+fi
+confirm 'Was E1M1 playable start-to-exit with correct static and dynamic lighting?' ||
+    die 'playability/lighting was not accepted'
+confirm 'Did the text console work after the normal quit?' ||
+    die 'normal-exit console restoration was not accepted'
+
+cat >&2 <<'EOF'
+quake-virge-gate: TIMEDEMO RUN
+  Let demo1 finish. After its "969 frames ... fps" line appears in Quake,
+  press Ctrl-C. The port must exit and l10gl-run must restore the console.
+EOF
+
+run_quake "$timedemo_log" +timedemo demo1 ||
+    die "timedemo run did not exit cleanly; see $timedemo_log"
+verify_common_run "$timedemo_log"
+require_log_line "$timedemo_log" 'Received signal 2, exiting...' \
+    'GLQuake Ctrl-C signal handling'
+
+result_line="$(sed -nE \
+    's/^([0-9]+) frames[[:space:]]+([0-9.]+) seconds[[:space:]]+([0-9.]+) fps$/\1 \2 \3/p' \
+    "$timedemo_log" | tail -n 1)"
+[[ -n "$result_line" ]] || die "timedemo result was not recorded; see $timedemo_log"
+read -r frames seconds fps <<<"$result_line"
+[[ "$frames" == "$CANONICAL_DEMO1_FRAMES" ]] ||
+    die "demo1 reported $frames frames; expected $CANONICAL_DEMO1_FRAMES"
+confirm 'Did the text console work after Ctrl-C?' ||
+    die 'Ctrl-C console restoration was not accepted'
+
+cat >"$report" <<EOF
+Q13 Phase 7 ViRGE acceptance: PASS
+started: $started_at
+completed: $(date --iso-8601=seconds)
+L10GL commit: $l10gl_commit
+L10GL-Quake commit: $quake_commit
+mode: 640x480x16 at the ViRGE 60 Hz native timing
+fresh boot: operator confirmed
+E1M1 start-to-exit: operator accepted; log confirms transition to E1M2
+Q12 lighting: operator accepted static/dynamic lighting; automatic exact mode logged
+normal exit console restore: operator accepted
+Ctrl-C console restore: signal path logged; operator accepted
+timedemo demo1: $frames frames in $seconds seconds ($fps fps)
+play log: $play_log
+timedemo log: $timedemo_log
+EOF
+
+log "PASS: E1M1 transitioned to E1M2; normal exit and Ctrl-C restored the console"
+log "PASS: demo1 reported $frames frames in ${seconds}s (${fps} fps)"
+log "report: $report"

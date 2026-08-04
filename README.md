@@ -273,6 +273,33 @@ re-uploads replace their old storage. If no block is large enough it prints
 the requested and total free byte counts; `glTexImage2D` reports
 `GL_OUT_OF_MEMORY` and does not write beyond detected VRAM.
 
+### GLQuake ViRGE phase acceptance
+
+Phase 7's final Q13 gate is an interactive target-machine run. As the first
+graphics workload after a fresh boot, run:
+
+```sh
+sudo tools/quake-virge-gate
+```
+
+By default the runner verifies or fetches the shareware pak and lets `make`
+confirm that the statically linked GLQuake binary contains the current L10GL
+library. `--skip-fetch` and `--skip-build` are available for an already
+prepared checkout. The gate forces the accepted
+ViRGE baseline (native 640x480x16 at 60 Hz, synchronized presentation, and
+the non-experimental submission paths) and uses an isolated game directory.
+First it starts E1M1 for a complete start-to-exit playthrough and normal
+`quit`; then it runs canonical `timedemo demo1` and asks for Ctrl-C after the
+result appears. Follow the on-screen checklist for lighting and console
+recovery.
+
+The runner checks the renderer/mode/lightmap markers, E1M1-to-E1M2 transition,
+969-frame timedemo result, absence of ViRGE timeout/OOM diagnostics, and the
+Ctrl-C signal path. It retains `play.log`, `timedemo.log`, and an operator-
+attested `q13-report.txt` under a fresh ignored `out/quake-q13.*` directory.
+Use `--quake-dir`, `--output-dir`, or `--runner` for non-default checkout and
+launcher locations.
+
 ### Software rendering and frame dumps
 
 Force offscreen swrast, render a bounded sequence, and write one PPM per frame:

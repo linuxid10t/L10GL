@@ -659,6 +659,15 @@ default used no `-lm_4` override and printed `Q12: ViRGE RGBA alpha lightmaps
 active`, confirming automatic target-renderer selection. Q12 is closed; Q13
 interactive E1M1 start-to-exit acceptance is now the active project step.
 
+The Q13 operator gate is now implemented as `tools/quake-virge-gate`. It runs
+the normal-exit E1M1-to-E1M2 playthrough and the Ctrl-C-ended canonical
+timedemo as two separately logged `l10gl-run` sessions, forces the accepted
+640x480@60 synchronized ViRGE baseline, checks the Q12 automatic-lightmap and
+known hardware-failure markers, and records operator visual/console sign-off
+plus exact commit IDs and FPS in `q13-report.txt`. Its isolated fake-runner
+fixture is in `tests/test-quake-virge-gate.sh`. The implementation is ready;
+the fresh-boot hardware acceptance run and resulting FPS entry remain pending.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

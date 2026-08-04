@@ -54,6 +54,7 @@ all: $(LIBRARY) $(PROGRAMS)
 check: all $(CHECK_PROGRAMS)
 	bash tests/test-l10gl-run.sh
 	bash tests/test-quake-swrast-gate.sh
+	bash tests/test-quake-virge-gate.sh
 	bash tests/test-quake-vram-budget.sh
 	./test-console
 	./test-mode

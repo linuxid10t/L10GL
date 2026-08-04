@@ -726,6 +726,21 @@ frame rate, is the bar — this chip was never fast at GLQuake and single-digit
 FPS does not block acceptance. Performance follow-ups go to the Phase 6
 methodology with before/after numbers.
 
+*Status (Q13, started 2026-08-04): target gate implemented; hardware run
+pending.* `tools/quake-virge-gate` now stages the shareware data outside the
+GPL/MIT boundary and drives the complete acceptance sequence through
+`l10gl-run`. It forces the accepted 640×480@60 native, synchronized ViRGE
+configuration. The first run starts E1M1 with developer map markers enabled,
+requires the operator to play through its exit into E1M2, and then exercises
+normal `quit`. The second runs canonical `timedemo demo1` and exercises the
+port's raw-keyboard Ctrl-C signal path. The runner rejects a wrong renderer,
+mode, or Q12 lightmap selection, a missing E1M1-to-E1M2 transition, a non-969
+frame result, and any ViRGE engine timeout or texture OOM. It writes both logs
+and an operator-attested report containing the exact FPS and repository
+commits. A no-hardware two-run lifecycle fixture is part of `make check`.
+Q13 remains open until the fresh-boot target run passes and its measured FPS
+is copied here.
+
 ## Execution order
 
 ```text
