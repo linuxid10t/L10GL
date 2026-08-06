@@ -16,6 +16,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 quake_dir="${L10GL_QUAKE_DIR:-$repo_root/../L10GL-Quake}"
 runner="${L10GL_RUNNER:-$repo_root/tools/l10gl-run}"
 output_dir=""
+keyboard_tty=""
 skip_fetch=0
 skip_build=0
 
@@ -30,8 +31,9 @@ Run the complete Phase 7 Q13 hardware acceptance sequence on a ViRGE:
 The script verifies renderer, mode, Q12 lighting selection, level transition,
 timedemo frame count, and Ctrl-C handling.  It asks the operator to attest the
 visual and console-restoration checks and writes q13-report.txt with the logs.
-Run this directly from a physical Linux text VT as the first graphics workload
-after a fresh boot.  The default hardware launcher rejects SSH PTYs and pipes.
+Invoke sudo directly from a physical Linux text VT as the first graphics
+workload after a fresh boot.  The gate validates sudo's original terminal and
+passes that device to GLQuake even when sudo runs the command on a proxy PTY.
 
 Options:
   --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
@@ -111,8 +113,8 @@ run_quake() {
     set +e
     (
         cd "$run_root"
-        L10GL_BACKEND=virge "$runner" -- \
-            env L10GL_BACKEND=virge \
+        L10GL_BACKEND=virge L10GL_KBD_DEV="$keyboard_tty" "$runner" -- \
+            env L10GL_BACKEND=virge L10GL_KBD_DEV="$keyboard_tty" \
             L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1 \
             L10GL_AUTOEXEC=0 L10GL_TRI_REUSE=0 \
             stdbuf -oL -eL "$binary" \
@@ -142,6 +144,14 @@ verify_common_run() {
         'synchronized presentation'
     require_log_line "$log_file" 'Q12: ViRGE RGBA alpha lightmaps active' \
         'automatic Q12 exact-lightmap selection'
+    if [[ -n "$keyboard_tty" ]]; then
+        require_log_line "$log_file" \
+            "in_l10gl: keyboard device $keyboard_tty" \
+            'physical-VT keyboard selection'
+        if grep -Fq 'keyboard disabled' "$log_file"; then
+            die "physical-VT keyboard initialization failed; see $log_file"
+        fi
+    fi
     reject_hardware_errors "$log_file"
 }
 
@@ -171,10 +181,16 @@ done
 
 [[ -x "$runner" ]] || die "launcher is not executable: $runner"
 runner="$(cd "$(dirname "$runner")" && pwd)/$(basename "$runner")"
+invocation_tty="${SUDO_TTY:-}"
+if [[ -z "$invocation_tty" ]]; then
+    invocation_tty="$(tty 2>/dev/null || true)"
+fi
+if [[ "$invocation_tty" =~ ^/dev/tty[0-9]+$ ]]; then
+    keyboard_tty=$invocation_tty
+fi
 if [[ "$runner" == "$repo_root/tools/l10gl-run" ]]; then
-    stdin_tty="$(tty 2>/dev/null || true)"
-    if [[ ! "$stdin_tty" =~ ^/dev/tty[0-9]+$ ]]; then
-        die "the hardware gate requires stdin on a physical Linux VT (/dev/ttyN); got ${stdin_tty:-not a tty}. Log in on the target text console and run it there; SSH PTYs and pipes are not accepted"
+    if [[ -z "$keyboard_tty" ]]; then
+        die "the hardware gate must be invoked from a physical Linux VT (/dev/ttyN); sudo reports ${invocation_tty:-no terminal}. Log in on the target text console and run sudo there; SSH PTYs and pipes are not accepted"
     fi
 fi
 
@@ -272,6 +288,7 @@ completed: $(date --iso-8601=seconds)
 L10GL commit: $l10gl_commit
 L10GL-Quake commit: $quake_commit
 mode: 640x480x16 at the ViRGE 60 Hz native timing
+keyboard VT: $keyboard_tty
 fresh boot: operator confirmed
 E1M1 start-to-exit: operator accepted; log confirms transition to E1M2
 Q12 lighting: operator accepted static/dynamic lighting; automatic exact mode logged

@@ -32,6 +32,9 @@ printf '%s\n' 'Video mode 640x480 (16bpp) initialized.'
 printf '%s\n' 'S3 ViRGE: P6 native mode: 640x480@60 RGB555, exact built-in timing'
 printf '%s\n' 'S3 ViRGE: presentation: synchronized double buffer (L10GL_VSYNC=1)'
 printf '%s\n' 'Q12: ViRGE RGBA alpha lightmaps active'
+if [[ -n ${L10GL_KBD_DEV:-} ]]; then
+    printf 'in_l10gl: keyboard device %s\n' "$L10GL_KBD_DEV"
+fi
 
 case " $* " in
     *' +map e1m1 '*)
@@ -55,6 +58,7 @@ EOF
 chmod +x "$runner"
 
 output_log=$(printf '%s\n' yes yes yes yes | \
+    SUDO_TTY=/dev/tty1 \
     L10GL_Q13_RUNNER_LOG="$runner_log" \
     "$repo_root/tools/quake-virge-gate" \
         --quake-dir "$quake_root" --output-dir "$output" --runner "$runner" \
@@ -65,8 +69,10 @@ grep -Fq 'PASS: demo1 reported 969 frames in 230.7s (4.2 fps)' <<< "$output_log"
 grep -Fq 'Q13 Phase 7 ViRGE acceptance: PASS' "$output/q13-report.txt"
 grep -Fq 'timedemo demo1: 969 frames in 230.7 seconds (4.2 fps)' \
     "$output/q13-report.txt"
+grep -Fq 'keyboard VT: /dev/tty1' "$output/q13-report.txt"
 grep -Fq -- '-width 640 -height 480 -bpp 16' "$runner_log"
 grep -Fq -- 'L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1' "$runner_log"
+grep -Fq -- 'L10GL_KBD_DEV=/dev/tty1' "$runner_log"
 grep -Fq -- '+map e1m1' "$runner_log"
 grep -Fq -- '+timedemo demo1' "$runner_log"
 [[ -L "$output/run/id1/pak0.pak" ]]
@@ -74,6 +80,7 @@ grep -Fq -- '+timedemo demo1' "$runner_log"
 signal_output="$fixture/signal-results"
 set +e
 signal_log=$(printf '%s\n' yes | \
+    SUDO_TTY=/dev/tty1 \
     L10GL_Q13_RUNNER_LOG="$runner_log" \
     L10GL_Q13_FIXTURE_PLAY_SIGNAL=1 \
     "$repo_root/tools/quake-virge-gate" \
@@ -86,12 +93,24 @@ grep -Fq "play run ended via 'Received signal 11, exiting...'" \
     <<< "$signal_log"
 
 set +e
-non_vt_log=$(env -u L10GL_RUNNER \
+non_vt_log=$(env -u L10GL_RUNNER -u SUDO_TTY \
     "$repo_root/tools/quake-virge-gate" \
         --quake-dir "$quake_root" --skip-fetch --skip-build </dev/null 2>&1)
 non_vt_status=$?
 set -e
 [[ $non_vt_status -ne 0 ]]
-grep -Fq 'requires stdin on a physical Linux VT (/dev/ttyN)' <<< "$non_vt_log"
+grep -Fq 'must be invoked from a physical Linux VT (/dev/ttyN)' \
+    <<< "$non_vt_log"
+
+set +e
+sudo_tty_log=$(SUDO_TTY=/dev/tty1 \
+    "$repo_root/tools/quake-virge-gate" \
+        --quake-dir "$fixture/missing-quake" --skip-fetch --skip-build \
+        </dev/null 2>&1)
+sudo_tty_status=$?
+set -e
+[[ $sudo_tty_status -ne 0 ]]
+grep -Fq 'not an L10GL-Quake checkout' <<< "$sudo_tty_log"
+! grep -Fq 'must be invoked from a physical Linux VT' <<< "$sudo_tty_log"
 
 printf 'quake virge gate fixture test: PASS\n'

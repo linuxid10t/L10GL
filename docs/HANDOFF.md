@@ -676,10 +676,14 @@ C-owned world-model name, and `worldspawn` first dereferenced it in `OP_EQ_S`.
 L10GL-Quake commit `89892bf` copies persistent engine strings and the builtin
 scratch string into the server hunk; the swrast regression now reaches
 `Server spawned`, completes local sign-on, and enters the level. The target log
-also recorded `KDGKBMODE`/`ENOTTY`, proving stdin was not a physical Linux VT.
-The Q13 gate now rejects the default hardware run unless stdin is `/dev/ttyN`
-and reports a play-run signal before secondary marker failures. The next step
-is to pull both pushed commits and rerun directly from the target text console.
+also recorded `KDGKBMODE`/`ENOTTY`. A follow-up confirmed the invoking shell
+was `/dev/tty1` but sudo's command terminal was `/dev/pts/1`, identifying
+sudo's `use_pty` proxy as the input disconnect. L10GL-Quake commit `26cad5b`
+lets GLQuake open an explicit physical keyboard VT. The Q13 gate now validates
+sudo's original `SUDO_TTY`, passes it as `L10GL_KBD_DEV`, requires successful
+keyboard initialization in both logs, and reports a play-run signal before
+secondary marker failures. The next step is to pull both pushed commits and
+rerun directly from the target text console; no sudoers change is required.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active

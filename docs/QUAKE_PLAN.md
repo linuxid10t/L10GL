@@ -746,10 +746,13 @@ signed 32-bit offsets from `pr_strings`, and the world-model offset truncated
 when the regions landed more than 2 GiB apart. L10GL-Quake commit `89892bf`
 keeps engine-published strings in the server hunk and the local-server
 regression now enters E1M1. The target log also showed keyboard setup failing
-with `KDGKBMODE`/`ENOTTY`; the acceptance runner now requires the default
-hardware launch to originate on a physical `/dev/ttyN`, rejecting SSH PTYs
-before framebuffer detachment. Q13 remains open until that direct-VT,
-fresh-boot rerun passes and its measured FPS is copied here.
+with `KDGKBMODE`/`ENOTTY`. Although the invoking shell was `/dev/tty1`, sudo's
+default `use_pty` policy moved the privileged process to `/dev/pts/1`.
+L10GL-Quake commit `26cad5b` adds explicit physical-VT keyboard input. The
+acceptance runner now validates sudo's original `SUDO_TTY`, passes that device
+as `L10GL_KBD_DEV`, and requires its successful initialization while still
+rejecting an SSH PTY before framebuffer detachment. Q13 remains open until
+that direct-VT, fresh-boot rerun passes and its measured FPS is copied here.
 
 ## Execution order
 
