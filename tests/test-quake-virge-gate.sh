@@ -35,6 +35,10 @@ printf '%s\n' 'Q12: ViRGE RGBA alpha lightmaps active'
 
 case " $* " in
     *' +map e1m1 '*)
+        if [[ ${L10GL_Q13_FIXTURE_PLAY_SIGNAL:-0} == 1 ]]; then
+            printf '%s\n' 'Received signal 11, exiting...'
+            exit 0
+        fi
         printf '%s\n' 'SpawnServer: e1m1'
         printf '%s\n' 'SpawnServer: e1m2'
         ;;
@@ -66,5 +70,28 @@ grep -Fq -- 'L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1' "$runner_log"
 grep -Fq -- '+map e1m1' "$runner_log"
 grep -Fq -- '+timedemo demo1' "$runner_log"
 [[ -L "$output/run/id1/pak0.pak" ]]
+
+signal_output="$fixture/signal-results"
+set +e
+signal_log=$(printf '%s\n' yes | \
+    L10GL_Q13_RUNNER_LOG="$runner_log" \
+    L10GL_Q13_FIXTURE_PLAY_SIGNAL=1 \
+    "$repo_root/tools/quake-virge-gate" \
+        --quake-dir "$quake_root" --output-dir "$signal_output" \
+        --runner "$runner" --skip-fetch --skip-build 2>&1)
+signal_status=$?
+set -e
+[[ $signal_status -ne 0 ]]
+grep -Fq "play run ended via 'Received signal 11, exiting...'" \
+    <<< "$signal_log"
+
+set +e
+non_vt_log=$(env -u L10GL_RUNNER \
+    "$repo_root/tools/quake-virge-gate" \
+        --quake-dir "$quake_root" --skip-fetch --skip-build </dev/null 2>&1)
+non_vt_status=$?
+set -e
+[[ $non_vt_status -ne 0 ]]
+grep -Fq 'requires stdin on a physical Linux VT (/dev/ttyN)' <<< "$non_vt_log"
 
 printf 'quake virge gate fixture test: PASS\n'

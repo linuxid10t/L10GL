@@ -275,8 +275,9 @@ the requested and total free byte counts; `glTexImage2D` reports
 
 ### GLQuake ViRGE phase acceptance
 
-Phase 7's final Q13 gate is an interactive target-machine run. As the first
-graphics workload after a fresh boot, run:
+Phase 7's final Q13 gate is an interactive target-machine run. Log in directly
+on a physical Linux text VT (`/dev/ttyN`), not through SSH, and as the first
+graphics workload after a fresh boot run:
 
 ```sh
 sudo tools/quake-virge-gate
@@ -293,9 +294,11 @@ First it starts E1M1 for a complete start-to-exit playthrough and normal
 result appears. Follow the on-screen checklist for lighting and console
 recovery.
 
-The runner checks the renderer/mode/lightmap markers, E1M1-to-E1M2 transition,
-969-frame timedemo result, absence of ViRGE timeout/OOM diagnostics, and the
-Ctrl-C signal path. It retains `play.log`, `timedemo.log`, and an operator-
+The default runner rejects SSH PTYs and noninteractive stdin before touching
+the framebuffer. It then checks the renderer/mode/lightmap markers,
+E1M1-to-E1M2 transition, 969-frame timedemo result, absence of unexpected
+signals or ViRGE timeout/OOM diagnostics, and the Ctrl-C signal path. It
+retains `play.log`, `timedemo.log`, and an operator-
 attested `q13-report.txt` under a fresh ignored `out/quake-q13.*` directory.
 Use `--quake-dir`, `--output-dir`, or `--runner` for non-default checkout and
 launcher locations.

@@ -659,14 +659,27 @@ default used no `-lm_4` override and printed `Q12: ViRGE RGBA alpha lightmaps
 active`, confirming automatic target-renderer selection. Q12 is closed; Q13
 interactive E1M1 start-to-exit acceptance is now the active project step.
 
-The Q13 operator gate is now implemented as `tools/quake-virge-gate`. It runs
+The Q13 operator gate is implemented as `tools/quake-virge-gate`. It runs
 the normal-exit E1M1-to-E1M2 playthrough and the Ctrl-C-ended canonical
 timedemo as two separately logged `l10gl-run` sessions, forces the accepted
 640x480@60 synchronized ViRGE baseline, checks the Q12 automatic-lightmap and
 known hardware-failure markers, and records operator visual/console sign-off
 plus exact commit IDs and FPS in `q13-report.txt`. Its isolated fake-runner
-fixture is in `tests/test-quake-virge-gate.sh`. The implementation is ready;
-the fresh-boot hardware acceptance run and resulting FPS entry remain pending.
+fixture is in `tests/test-quake-virge-gate.sh`.
+
+**First Q13 target attempt diagnosed 2026-08-05; rerun pending.** The hardware
+path selected the ViRGE, applied the correct 640x480@60 native timing, and
+restored the CRTC/fbcon after exit, but GLQuake raised signal 11 while spawning
+E1M1. The same failure reproduced under swrast: QuakeC's signed 32-bit
+`string_t` truncated the native x86-64 pointer delta from `pr_strings` to the
+C-owned world-model name, and `worldspawn` first dereferenced it in `OP_EQ_S`.
+L10GL-Quake commit `89892bf` copies persistent engine strings and the builtin
+scratch string into the server hunk; the swrast regression now reaches
+`Server spawned`, completes local sign-on, and enters the level. The target log
+also recorded `KDGKBMODE`/`ENOTTY`, proving stdin was not a physical Linux VT.
+The Q13 gate now rejects the default hardware run unless stdin is `/dev/ttyN`
+and reports a play-run signal before secondary marker failures. The next step
+is to pull both pushed commits and rerun directly from the target text console.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active

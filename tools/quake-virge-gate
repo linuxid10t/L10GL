@@ -30,7 +30,8 @@ Run the complete Phase 7 Q13 hardware acceptance sequence on a ViRGE:
 The script verifies renderer, mode, Q12 lighting selection, level transition,
 timedemo frame count, and Ctrl-C handling.  It asks the operator to attest the
 visual and console-restoration checks and writes q13-report.txt with the logs.
-Run this as the first graphics workload after a fresh boot.
+Run this directly from a physical Linux text VT as the first graphics workload
+after a fresh boot.  The default hardware launcher rejects SSH PTYs and pipes.
 
 Options:
   --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
@@ -168,10 +169,17 @@ while (($#)); do
     esac
 done
 
-[[ -d "$quake_dir/WinQuake" ]] || die "not an L10GL-Quake checkout: $quake_dir"
-quake_dir="$(cd "$quake_dir" && pwd)"
 [[ -x "$runner" ]] || die "launcher is not executable: $runner"
 runner="$(cd "$(dirname "$runner")" && pwd)/$(basename "$runner")"
+if [[ "$runner" == "$repo_root/tools/l10gl-run" ]]; then
+    stdin_tty="$(tty 2>/dev/null || true)"
+    if [[ ! "$stdin_tty" =~ ^/dev/tty[0-9]+$ ]]; then
+        die "the hardware gate requires stdin on a physical Linux VT (/dev/ttyN); got ${stdin_tty:-not a tty}. Log in on the target text console and run it there; SSH PTYs and pipes are not accepted"
+    fi
+fi
+
+[[ -d "$quake_dir/WinQuake" ]] || die "not an L10GL-Quake checkout: $quake_dir"
+quake_dir="$(cd "$quake_dir" && pwd)"
 
 pak="$quake_dir/WinQuake/id1/pak0.pak"
 if ! pak_is_valid "$pak"; then
@@ -224,12 +232,12 @@ EOF
 
 run_quake "$play_log" +map e1m1 ||
     die "play run did not exit cleanly; see $play_log"
+if signal_line="$(grep -Fm1 'Received signal ' "$play_log")"; then
+    die "play run ended via '$signal_line' instead of normal quit; see $play_log"
+fi
 verify_common_run "$play_log"
 require_log_line "$play_log" 'SpawnServer: e1m1' 'E1M1 start'
 require_log_line "$play_log" 'SpawnServer: e1m2' 'E1M1-to-E1M2 transition'
-if grep -Fq 'Received signal ' "$play_log"; then
-    die "play run used signal teardown instead of normal quit; see $play_log"
-fi
 confirm 'Was E1M1 playable start-to-exit with correct static and dynamic lighting?' ||
     die 'playability/lighting was not accepted'
 confirm 'Did the text console work after the normal quit?' ||
