@@ -148,6 +148,9 @@ verify_common_run() {
         require_log_line "$log_file" \
             "in_l10gl: keyboard device $keyboard_tty" \
             'physical-VT keyboard selection'
+        require_log_line "$log_file" \
+            'in_l10gl: keyboard input via stdin' \
+            'sudo-proxy-aware keyboard input'
         if grep -Fq 'keyboard disabled' "$log_file"; then
             die "physical-VT keyboard initialization failed; see $log_file"
         fi
@@ -214,6 +217,10 @@ if [[ $skip_build -eq 0 ]]; then
 fi
 [[ -x "$binary" ]] || die "build did not produce executable: $binary"
 binary="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
+if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
+   ! grep -aFq 'in_l10gl: keyboard input via stdin' "$binary"; then
+    die "GLQuake binary lacks sudo-proxy keyboard input support; rebuild L10GL-Quake commit faa612d or newer"
+fi
 
 if [[ -z "$output_dir" ]]; then
     mkdir -p "$repo_root/out"

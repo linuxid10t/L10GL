@@ -685,19 +685,25 @@ keyboard initialization in both logs, and reports a play-run signal before
 secondary marker failures. The next step is to pull both pushed commits and
 rerun directly from the target text console; no sudoers change is required.
 
-**Second Q13 target attempt cleared both startup blockers on 2026-08-05; full
-gate still in progress.** With L10GL commit `d24fe60` and L10GL-Quake commit
-`26cad5b`, the launcher passed `L10GL_KBD_DEV=/dev/tty1`; GLQuake logged that
-physical keyboard device without a `keyboard disabled` diagnostic. E1M1 then
-loaded every startup model, reported `33 entities inhibited`, reached
+**Second Q13 target attempt cleared the server crash but exposed a keyboard
+reader race on 2026-08-05.** With L10GL commit `d24fe60` and L10GL-Quake commit
+`26cad5b`, the launcher passed `L10GL_KBD_DEV=/dev/tty1`; GLQuake opened that
+device and entered `K_MEDIUMRAW` without a `keyboard disabled` diagnostic.
+E1M1 loaded every startup model, reported `33 entities inhibited`, reached
 `Server spawned`, completed all four local sign-on replies, printed `player
-entered the game`, and progressed to an in-level shell pickup without signal
-11. The hardware run also selected the expected synchronized 640x480@60 ViRGE
-path and activated `Q12: ViRGE RGBA alpha lightmaps active (10 ARGB4444
-atlases)`. This hardware-verifies the VM-string crash fix and sudo-proxy
-keyboard routing. The supplied log stops during E1M1, so the E1M2 transition,
-normal quit, canonical timedemo, Ctrl-C restore, and final Q13 report remain
-the active acceptance work.
+entered the game`, and remained stable without signal 11. The synchronized
+640x480@60 ViRGE path also activated `Q12: ViRGE RGBA alpha lightmaps active
+(10 ARGB4444 atlases)`.
+
+The operator then reported that no keys reached Quake and had to kill it over
+SSH. Opening `/dev/tty1` created a second reader, but sudo's `use_pty` monitor
+continued consuming the physical-VT bytes first and forwarding them to the
+child PTY. L10GL-Quake commit `faa612d` now uses `/dev/tty1` only for keyboard
+mode ioctls, puts the child terminal in fully raw mode, and reads the forwarded
+medium-raw bytes from stdin. The Q13 gate requires its new `keyboard input via
+stdin` marker in the binary before hardware detachment and in both logs. Thus
+the VM-string fix is hardware-verified, while movement, console entry, Ctrl-C,
+E1M2 transition, timedemo, and the final report remain pending a fresh rerun.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active

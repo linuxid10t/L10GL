@@ -297,8 +297,10 @@ recovery.
 The default runner validates sudo's original `SUDO_TTY`, rejecting SSH PTYs
 and noninteractive launches before touching the framebuffer. Current sudo may
 run the privileged command on a proxy `/dev/pts` even when invoked correctly;
-the gate passes the original `/dev/ttyN` to GLQuake as its keyboard device. It
-then checks the renderer/mode/lightmap/keyboard markers,
+the gate passes the original `/dev/ttyN` to GLQuake for keyboard-mode control.
+Sudo remains the physical-VT reader and forwards medium-raw bytes through the
+child's stdin. The gate requires this proxy-aware input build before touching
+the framebuffer, then checks the renderer/mode/lightmap/keyboard markers,
 E1M1-to-E1M2 transition, 969-frame timedemo result, absence of unexpected
 signals or ViRGE timeout/OOM diagnostics, and the Ctrl-C signal path. It
 retains `play.log`, `timedemo.log`, and an operator-

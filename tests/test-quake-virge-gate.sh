@@ -34,6 +34,7 @@ printf '%s\n' 'S3 ViRGE: presentation: synchronized double buffer (L10GL_VSYNC=1
 printf '%s\n' 'Q12: ViRGE RGBA alpha lightmaps active'
 if [[ -n ${L10GL_KBD_DEV:-} ]]; then
     printf 'in_l10gl: keyboard device %s\n' "$L10GL_KBD_DEV"
+    printf '%s\n' 'in_l10gl: keyboard input via stdin'
 fi
 
 case " $* " in
@@ -103,14 +104,16 @@ grep -Fq 'must be invoked from a physical Linux VT (/dev/ttyN)' \
     <<< "$non_vt_log"
 
 set +e
-sudo_tty_log=$(SUDO_TTY=/dev/tty1 \
+stale_binary_log=$(SUDO_TTY=/dev/tty1 \
     "$repo_root/tools/quake-virge-gate" \
-        --quake-dir "$fixture/missing-quake" --skip-fetch --skip-build \
+        --quake-dir "$quake_root" --skip-fetch --skip-build \
         </dev/null 2>&1)
-sudo_tty_status=$?
+stale_binary_status=$?
 set -e
-[[ $sudo_tty_status -ne 0 ]]
-grep -Fq 'not an L10GL-Quake checkout' <<< "$sudo_tty_log"
-! grep -Fq 'must be invoked from a physical Linux VT' <<< "$sudo_tty_log"
+[[ $stale_binary_status -ne 0 ]]
+grep -Fq 'binary lacks sudo-proxy keyboard input support' \
+    <<< "$stale_binary_log"
+! grep -Fq 'must be invoked from a physical Linux VT' \
+    <<< "$stale_binary_log"
 
 printf 'quake virge gate fixture test: PASS\n'
