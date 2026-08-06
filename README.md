@@ -287,6 +287,15 @@ graphics workload owns the card. A reboot is not required. Run:
 sudo tools/quake-virge-gate
 ```
 
+Use this full gate only for final Q13 acceptance. For a narrow diagnostic,
+use the smallest direct command that exercises that behavior; do not copy the
+gate's expanded defaults into an operator command. Target checkouts are
+`$HOME/L10GL` and `$HOME/L10GL-Quake` (no username-specific paths). Finish and
+batch local diagnostics before requesting a physical-console check so one
+target visit can cover the complete observation list. The mandatory agent
+protocol and the minimal E1M1-to-E1M2 discriminator are documented in
+`docs/HANDOFF.md` under "Q13 operator-effort protocol."
+
 By default the runner verifies or fetches the shareware pak and lets `make`
 confirm that the statically linked GLQuake binary contains the current L10GL
 library. `--skip-fetch` and `--skip-build` are available for an already

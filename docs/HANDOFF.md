@@ -3,7 +3,15 @@
 Audience: an implementing agent picking up this project cold. Read
 `PLAN.md` (roadmap + current-state snapshot) and
 `docs/datasheets/README.md` (datasheet page index + verified register
-facts) before changing code. Live state: symptom 1 (diagnosed — monitor
+facts) before changing code.
+
+**Operator constraint for every future agent:** the hardware target is a
+second physical computer. Exhaust local checks, batch target observations, and
+send David one minimal copy/paste block with no unrelated/default flags, no
+username-specific paths, and no reboot request without concrete evidence.
+Read "Q13 operator-effort protocol" below before proposing any target command.
+
+Live state: symptom 1 (diagnosed — monitor
 scaling moiré, parked); symptom 2 (3D Z-buffer cutoff — RESOLVED);
 double-buffering with vsync page-flip (LANDED 2026-07-07); back-face
 "bleedthrough" — RESOLVED on silicon 2026-07-08 (perspective cull +
@@ -740,6 +748,56 @@ leaves 118,720. The operator gate requires the new reclamation marker; its
 remaining keyboard/movement/exit/timedemo acceptance requires a physical VT
 but no reboot.
 
+### Q13 operator-effort protocol (mandatory for future agents)
+
+David operates the ViRGE target from a second computer. A request to inspect
+the target display or use its physical keyboard costs a trip between machines;
+treat that as a scarce test resource, not as an interactive debugging loop.
+Before asking for another target run, exhaust the local swrast gate, fixtures,
+trace replay, log inspection, and build checks, then combine every observation
+that can safely be made in the same hardware session. State the complete
+checklist before the run. Do not ask for a series of one-symptom trips.
+
+Commands sent to David must follow all of these rules:
+
+- Give one copy/paste block and lead with the shortest command that tests the
+  current discriminator. Do not substitute the full acceptance gate when a
+  direct map or rendering check is sufficient.
+- Use `$HOME/L10GL` and `$HOME/L10GL-Quake`; never assume a username or embed
+  `/home/<user>`. Separate a one-time pull/build block from the test command,
+  and do not repeat it unless a newer commit actually needs to be installed.
+- Every environment variable and argument must have a present-tense reason.
+  Omit values that are already defaults. In particular, do not add
+  `L10GL_BACKEND=virge`, `L10GL_REFRESH=60`, `L10GL_VSYNC=1`,
+  `L10GL_AUTOEXEC=0`, `L10GL_TRI_REUSE=0`, `stdbuf`, `-nosound`,
+  `-nocdaudio`, `-noudp`, `-nojoy`, `-width 640`, `-height 480`, `-bpp 16`,
+  `+developer 1`, or `-basedir` to a direct Q13 check unless that particular
+  test truly depends on it and the reason is stated.
+- Say explicitly whether a command may run over SSH or must be invoked from
+  the physical text VT. Only require the physical VT when local keyboard input
+  is part of the observation. Never imply that an SSH PTY can validate the
+  physical-keyboard route.
+- Do not request a reboot for a rendering, map-transition, input, or console
+  check. Reboot only when evidence shows that machine state cannot be restored
+  in place, and explain that evidence first.
+
+For the current narrow E1M1-to-E1M2 texture-reclamation check, the complete
+direct command is deliberately only:
+
+```sh
+cd "$HOME/L10GL-Quake/WinQuake"
+sudo L10GL_MODESET=native L10GL_KBD_DEV="$(tty)" \
+  "$HOME/L10GL/tools/l10gl-run" -- \
+  ./glquake.l10gl +map e1m1 +wait +map e1m2
+```
+
+Run that form from the physical text VT when keyboard control/normal quit is
+also being checked. `L10GL_MODESET=native` selects the required ViRGE takeover;
+`L10GL_KBD_DEV="$(tty)"` preserves the invoking physical VT across sudo's
+proxy PTY; `l10gl-run` handles selection, fbcon detach, and restoration. The
+two map commands create the old-to-new map lifetime being tested. Nothing else
+from the full gate's expanded command line is required for this discriminator.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.
@@ -917,7 +975,7 @@ For every change:
   compiles before he ever pulls. Plain `make` builds the static library, all
   backends, every frontend demo, and every retained diagnostic.
 - `git commit` with the **expected hardware observation** in the message
-  (what David should see on `david-ta970`), then `git push origin main`
+  (what David should see on `david-ta970`), then `git push`
   **immediately**.
 - **Never hold a commit "until hardware-verified" — that deadlocks him.**
   Push first; he pulls, runs on `david-ta970`, and reports logs/photos back.

@@ -570,6 +570,17 @@ as its base model. The automated E1M1-to-E1M2-to-E1M1 cycle now replays 769
 events at **2,232,384 bytes, leaving 118,720 bytes**. This cycle is part of
 `tools/quake-swrast-gate`; its hardware confirmation does not require a reboot.
 
+**Operator-effort constraint:** the ViRGE target is a separate physical
+machine. Complete local diagnostics first and batch all safe visual, input,
+map-transition, timedemo, exit, and console-restoration observations into the
+fewest target sessions possible. Give the operator one minimal copy/paste
+block, using `$HOME/L10GL` and `$HOME/L10GL-Quake`, and omit every default or
+unrelated flag. A narrow direct test must not inherit the gate's verbose
+expanded command line. The exact current map-transition discriminator is
+recorded in `docs/HANDOFF.md` under "Q13 operator-effort protocol." State
+whether the command can run through SSH or requires the physical VT, and never
+request a reboot without concrete evidence that in-place restoration failed.
+
 ### Q11. First hardware run: fullbright world
 
 Run the ported GLQuake on the ViRGE/DX with lightmaps disabled
