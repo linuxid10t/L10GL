@@ -2086,12 +2086,13 @@ void virge_replicate_to_square(const void *src, int w, int h, int bpt,
 }
 
 void virge_texture_scale_uv(float *u, float *v, uint32_t width,
-                            uint32_t height, int s_val)
+                            uint32_t height, int s_val, int gl_half_texel)
 {
     float fallback = (float)(1u << s_val);
+    float bias = gl_half_texel ? 0.5f : 0.0f;
 
-    *u *= width ? (float)width : fallback;
-    *v *= height ? (float)height : fallback;
+    *u = *u * (width ? (float)width : fallback) - bias;
+    *v = *v * (height ? (float)height : fallback) - bias;
 }
 
 void virge_rebase_repeat_axis(float *a, float *b, float *c)
@@ -2147,8 +2148,8 @@ void virge_upload_texture(struct virge_ctx *ctx, uint32_t dest,
  * Texture coordinate interpolation with perspective:
  *   The ViRGE interpolates U/W, V/W, and 1/W across the triangle, then
  *   divides to get perspective-correct U,V. We provide U, V, W as:
- *     U_texel = u * (tex_width - 1)
- *     V_texel = v * (tex_height - 1)
+ *     U_texel = u * tex_width - 0.5 (OpenGL path)
+ *     V_texel = v * tex_height - 0.5 (OpenGL path)
  *     W = 1.0 / Z_eye (or 1.0 if perspective correction is disabled)
  *
  * The color values modulate the texel (modulate blending mode).
@@ -2252,11 +2253,30 @@ void virge_draw_textured_triangle(struct virge_ctx *ctx,
         virge_rebase_repeat_axis(&v0.v, &v1.v, &v2.v);
     }
     virge_texture_scale_uv(&v0.u, &v0.v, ctx->tex_width, ctx->tex_height,
-                           s_val);
+                           s_val, ctx->tex_gl_half_texel);
     virge_texture_scale_uv(&v1.u, &v1.v, ctx->tex_width, ctx->tex_height,
-                           s_val);
+                           s_val, ctx->tex_gl_half_texel);
     virge_texture_scale_uv(&v2.u, &v2.v, ctx->tex_width, ctx->tex_height,
-                           s_val);
+                           s_val, ctx->tex_gl_half_texel);
+    if (ctx->tex_gl_half_texel &&
+        (ctx->tex_cmd_bits & VIRGE_CMD_TEX_WRAP)) {
+        float fallback = (float)(1u << s_val);
+        float u_period = ctx->tex_width ? (float)ctx->tex_width : fallback;
+        float v_period = ctx->tex_height ? (float)ctx->tex_height : fallback;
+
+        /* Rebasing above puts each normalized minimum in [0,1). The GL
+         * half-texel bias can therefore make it no smaller than -0.5 texel.
+         * Shift that one boundary case by a complete repeated source period
+         * so the hardware still receives the non-negative range proven by
+         * the Q11 ViRGE coordinate gate. Rectangular allocations contain
+         * exact replicated copies at each original-width/height period. */
+        if (fminf(v0.u, fminf(v1.u, v2.u)) < 0.0f) {
+            v0.u += u_period; v1.u += u_period; v2.u += u_period;
+        }
+        if (fminf(v0.v, fminf(v1.v, v2.v)) < 0.0f) {
+            v0.v += v_period; v1.v += v_period; v2.v += v_period;
+        }
+    }
 
     /* Perspective-correct texturing: the engine interpolates TUS/TVS/TWS
      * linearly and divides per pixel (texel = TUS/TWS, proven on silicon --

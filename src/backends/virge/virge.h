@@ -756,6 +756,12 @@ struct virge_ctx {
      * diagnostics that intentionally exercise out-of-range hardware values. */
     int tex_uv_rebase;
 
+    /* Apply OpenGL's normalized-coordinate texel-center convention after
+     * scaling: texel = u * width - 0.5. Real DX silicon samples integer
+     * texture coordinates at texel centers (texprobe TEST 18), so the bias is
+     * required for parity with swrast. Raw diagnostics leave this zero. */
+    int tex_gl_half_texel;
+
     /* Raise very small homogeneous W values into the fixed-point range proven
      * by texprobe. The L10GL backend enables this; raw diagnostics leave it
      * zero so their exact W inputs still reach the registers. */
@@ -947,10 +953,10 @@ void virge_replicate_to_square(const void *src, int w, int h, int bpt,
                                int side, void *dst);
 
 /* Convert normalized U/V to texel units using independent source dimensions.
- * Pure helper used by the draw path and hardware-independent tests. A zero
- * dimension falls back to square side 2^s for direct diagnostic callers. */
+ * When gl_half_texel is nonzero, apply OpenGL's u*N-0.5 texel-center mapping.
+ * A zero dimension falls back to square side 2^s for diagnostic callers. */
 void virge_texture_scale_uv(float *u, float *v, uint32_t width,
-                            uint32_t height, int s_val);
+                            uint32_t height, int s_val, int gl_half_texel);
 
 /* Subtract one common integer period from a triangle's coordinates. This is
  * exact under GL_REPEAT because it preserves every edge delta and fractional

@@ -28,9 +28,10 @@ Run the complete Phase 7 Q13 hardware acceptance sequence on a ViRGE:
   1. play E1M1 through its exit, enter E1M2, then quit normally;
   2. run timedemo demo1, note its result, then stop with Ctrl-C.
 
-The script verifies renderer, mode, Q12 lighting selection, level transition,
-timedemo frame count, and Ctrl-C handling.  It asks the operator to attest the
-visual and console-restoration checks and writes q13-report.txt with the logs.
+The script verifies renderer, mode, Q12 lighting, the bounded Q13 texture
+policy, level transition, timedemo frame count, and Ctrl-C handling. It asks
+the operator to attest the visual and console-restoration checks and writes
+q13-report.txt with the logs.
 Invoke sudo directly from a physical Linux text VT as the first graphics
 workload after a fresh boot.  The gate validates sudo's original terminal and
 passes that device to GLQuake even when sudo runs the command on a proxy PTY.
@@ -144,6 +145,12 @@ verify_common_run() {
         'synchronized presentation'
     require_log_line "$log_file" 'Q12: ViRGE RGBA alpha lightmaps active' \
         'automatic Q12 exact-lightmap selection'
+    require_log_line "$log_file" \
+        'Q13: brush textures through 128x128 use picmip 1' \
+        'bounded Q13 world-texture detail policy'
+    require_log_line "$log_file" \
+        'S3 ViRGE: OpenGL texture sampling uses u*N-0.5 texel centers' \
+        'OpenGL half-texel sampler phase'
     if [[ -n "$keyboard_tty" ]]; then
         require_log_line "$log_file" \
             "in_l10gl: keyboard device $keyboard_tty" \
@@ -221,6 +228,14 @@ if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
    ! grep -aFq 'in_l10gl: keyboard input via stdin' "$binary"; then
     die "GLQuake binary lacks sudo-proxy keyboard input support; rebuild L10GL-Quake commit faa612d or newer"
 fi
+if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
+   ! grep -aFq 'Q13: brush textures through 128x128 use picmip 1' "$binary"; then
+    die "GLQuake binary lacks the bounded Q13 world-texture detail policy; rebuild the current L10GL-Quake origin/master"
+fi
+if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
+   ! grep -aFq 'S3 ViRGE: OpenGL texture sampling uses u*N-0.5 texel centers' "$binary"; then
+    die "GLQuake binary lacks the OpenGL half-texel ViRGE correction; rebuild L10GL and then rebuild L10GL-Quake"
+fi
 
 if [[ -z "$output_dir" ]]; then
     mkdir -p "$repo_root/out"
@@ -261,8 +276,8 @@ fi
 verify_common_run "$play_log"
 require_log_line "$play_log" 'SpawnServer: e1m1' 'E1M1 start'
 require_log_line "$play_log" 'SpawnServer: e1m2' 'E1M1-to-E1M2 transition'
-confirm 'Was E1M1 playable start-to-exit with correct static and dynamic lighting?' ||
-    die 'playability/lighting was not accepted'
+confirm 'Was E1M1 playable start-to-exit with correct lighting and sharper, stable world textures?' ||
+    die 'playability/lighting/texture quality was not accepted'
 confirm 'Did the text console work after the normal quit?' ||
     die 'normal-exit console restoration was not accepted'
 
@@ -299,6 +314,7 @@ keyboard VT: $keyboard_tty
 fresh boot: operator confirmed
 E1M1 start-to-exit: operator accepted; log confirms transition to E1M2
 Q12 lighting: operator accepted static/dynamic lighting; automatic exact mode logged
+Q13 texture detail: operator accepted sharper stable world textures; bounded policy logged
 normal exit console restore: operator accepted
 Ctrl-C console restore: signal path logged; operator accepted
 timedemo demo1: $frames frames in $seconds seconds ($fps fps)

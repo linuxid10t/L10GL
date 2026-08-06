@@ -258,11 +258,12 @@ because it downloads shareware data and creates the capture artifacts.
 For the 4 MiB ViRGE/DX, the private GLQuake port starts with
 `gl_max_size 256` and `gl_picmip 2`. This policy must be active before
 `Draw_Init`; command-line `+` commands arrive too late for bootstrap textures.
-The mip reduction applies only to mipmapped world/model assets, keeping the
-charset, HUD scraps, and other fixed UI textures readable. The recorded
-shareware `demo1`/E1M3 set peaks at 2,196,416 texture bytes, leaving 154,688
-bytes after 640x480 RGB555 double buffers and 16-bit Z. Inspect any gate run
-with:
+The Q13 quality policy selectively raises brush textures whose original sides
+are at most 128 texels to picmip 1; larger brush textures and every model or
+sprite skin retain picmip 2. Fixed charset, HUD scraps, and other UI textures
+remain readable. The canonical shareware `demo1`/E1M3 trace peaks at
+2,286,272 texture bytes, leaving 64,832 bytes after 640x480 RGB555 double
+buffers and 16-bit Z. Inspect any gate run with:
 
 ```sh
 tools/quake-vram-budget --trace /path/to/results/textures.tsv

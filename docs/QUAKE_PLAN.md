@@ -536,6 +536,30 @@ first-fit fragmentation, and real level-fit gates are green. PENDING — human
 texture-quality sign-off on ViRGE; Q11 remains hardware-gated until that
 check.
 
+**Q13 texture-quality correction (2026-08-06): FIT in software; silicon
+rerun pending.** The operator's report that textures looked muddier than
+expected reproduced in a controlled E1M1 swrast comparison, isolating it from
+the ViRGE rasterizer. The blanket Q10 `gl_picmip 2` reduced every mipmapped
+world/model asset to one quarter width and height (one sixteenth the texels):
+E1M1 needed 6,475,392 bytes at picmip 0, 4,205,568 at picmip 1, and 2,065,248
+at picmip 2, versus the 2,351,104-byte synchronized heap. L10GL-Quake commit
+`24c95b5` now uses picmip 1 only for brush textures whose original width and
+height are at most 128, retaining picmip 2 for larger brush textures and all
+model/sprite skins. Explicit non-default `gl_picmip` choices keep their
+original behavior. The real 969-frame demo1 rerun produced 188 events and
+replayed through the exact first-fit allocator at **2,286,272 bytes, leaving
+64,832 bytes**.
+
+The same audit exposed an independent sampler-phase error. Texprobe TEST 18
+proved real DX silicon places texel centers at integer texture coordinates,
+while OpenGL's normalized convention is `u*N-0.5` (already used by swrast).
+The production ViRGE path had supplied `u*N`; it now applies the missing
+half-texel bias while leaving raw diagnostic callers unchanged and shifts the
+boundary case by one complete repeat period to retain the silicon-proven
+non-negative coordinate range. Unit tests pin rectangular scaling with and
+without the GL bias. The target gate must show sharper stable walls with no
+texture OOM, new seams, swimming, or coordinate corruption.
+
 ### Q11. First hardware run: fullbright world
 
 Run the ported GLQuake on the ViRGE/DX with lightmaps disabled
@@ -766,6 +790,14 @@ now rejects older binaries before hardware detachment and requires the new
 input-route marker in both logs. Q13 remains open pending live movement,
 console entry, E1M2 transition, normal quit, timedemo/969-frame result, Ctrl-C
 restoration, and the generated PASS report.
+
+On 2026-08-06 the pre-rerun texture-quality audit also replaced the blanket
+picmip-2 world policy with the bounded <=128x128 brush picmip-1 policy and
+corrected the ViRGE OpenGL half-texel sampler phase. The canonical swrast
+demo still completes 969 frames, and its exact 4 MiB replay leaves 64,832
+bytes. The pending Q13 hardware run must therefore check texture sharpness
+and alignment in addition to keyboard delivery: nearby walls should retain
+more detail, with no OOM, seams, swimming, or regression in Q12 lighting.
 
 ## Execution order
 

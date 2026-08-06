@@ -624,15 +624,25 @@ static void test_texture_replication(void)
      * replication then keeps larger repeated coordinates exact. */
     {
         float u = 0.5f, v = 0.5f;
-        virge_texture_scale_uv(&u, &v, 128, 32, 7);
+        virge_texture_scale_uv(&u, &v, 128, 32, 7, 0);
         EXPECT(u == 64.0f && v == 16.0f,
                "rectangular UV uses independent source dimensions");
+    }
+
+    /* Texprobe TEST 18 established that DX silicon treats integer texture
+     * coordinates as texel centers. OpenGL instead maps normalized U/V with
+     * u*N-.5, matching swrast's sampler convention. */
+    {
+        float u = 0.5f, v = 0.5f;
+        virge_texture_scale_uv(&u, &v, 128, 32, 7, 1);
+        EXPECT(u == 63.5f && v == 15.5f,
+               "OpenGL UV applies the half-texel center bias");
     }
 
     /* Raw diagnostics set only CMD_SET's square-size field. */
     {
         float u = 0.5f, v = 0.25f;
-        virge_texture_scale_uv(&u, &v, 0, 0, 6);
+        virge_texture_scale_uv(&u, &v, 0, 0, 6, 0);
         EXPECT(u == 32.0f && v == 16.0f,
                "unset dimensions retain square diagnostic scaling");
     }

@@ -26,7 +26,9 @@ usage() {
 usage: tools/quake-swrast-gate [options]
 
 Build and run GLQuake's shareware demo1 through L10GL swrast, capture every
-presented frame, and verify the canonical timedemo frame count (${CANONICAL_DEMO1_FRAMES}).
+presented frame, verify the canonical timedemo frame count
+(${CANONICAL_DEMO1_FRAMES}), and require its texture trace to fit the 4 MiB
+ViRGE layout.
 
 Options:
   --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
@@ -159,6 +161,8 @@ if [[ "$frames" != "$CANONICAL_DEMO1_FRAMES" ]]; then
 fi
 grep -Fq 'GL_RENDERER: L10GL/swrast' "$log_file" || die "did not initialize the L10GL swrast renderer; see $log_file"
 grep -Fq 'Video mode 320x240 (16bpp) initialized.' "$log_file" || die "did not initialize the requested video mode; see $log_file"
+grep -Fq 'Q13: brush textures through 128x128 use picmip 1' "$log_file" || \
+    die "selective Q13 world-texture policy did not activate; see $log_file"
 
 # Quake returns to its normal demo loop after CL_FinishTimeDemo.  Completion
 # is the result line above; terminate now so the gate is bounded and lets the
@@ -170,5 +174,9 @@ child_pid=""
 dump_count="$(find "$output_dir" -maxdepth 1 -type f -name 'frame*.ppm' | wc -l)"
 [[ "$dump_count" -gt 0 ]] || die "timedemo completed but no swrast frame was captured"
 [[ -s "$texture_trace" ]] || die "timedemo completed but did not record texture uploads"
-log "texture trace: $texture_trace (run tools/quake-vram-budget --trace to assess ViRGE residency)"
+if ! budget_output=$("$repo_root/tools/quake-vram-budget" --trace "$texture_trace" 2>&1); then
+    die "texture trace does not fit the 4 MiB ViRGE layout: $budget_output"
+fi
+log "$budget_output"
+log "texture trace: $texture_trace"
 log "PASS: demo1 reported $frames frames in ${seconds}s (${fps} fps); captured $dump_count PPM frames"

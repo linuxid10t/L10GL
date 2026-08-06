@@ -32,6 +32,8 @@ printf '%s\n' 'Video mode 640x480 (16bpp) initialized.'
 printf '%s\n' 'S3 ViRGE: P6 native mode: 640x480@60 RGB555, exact built-in timing'
 printf '%s\n' 'S3 ViRGE: presentation: synchronized double buffer (L10GL_VSYNC=1)'
 printf '%s\n' 'Q12: ViRGE RGBA alpha lightmaps active'
+printf '%s\n' 'Q13: brush textures through 128x128 use picmip 1; large/model textures retain picmip 2'
+printf '%s\n' 'S3 ViRGE: OpenGL texture sampling uses u*N-0.5 texel centers'
 if [[ -n ${L10GL_KBD_DEV:-} ]]; then
     printf 'in_l10gl: keyboard device %s\n' "$L10GL_KBD_DEV"
     printf '%s\n' 'in_l10gl: keyboard input via stdin'
