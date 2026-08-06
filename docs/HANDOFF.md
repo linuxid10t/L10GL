@@ -685,6 +685,20 @@ keyboard initialization in both logs, and reports a play-run signal before
 secondary marker failures. The next step is to pull both pushed commits and
 rerun directly from the target text console; no sudoers change is required.
 
+**Second Q13 target attempt cleared both startup blockers on 2026-08-05; full
+gate still in progress.** With L10GL commit `d24fe60` and L10GL-Quake commit
+`26cad5b`, the launcher passed `L10GL_KBD_DEV=/dev/tty1`; GLQuake logged that
+physical keyboard device without a `keyboard disabled` diagnostic. E1M1 then
+loaded every startup model, reported `33 entities inhibited`, reached
+`Server spawned`, completed all four local sign-on replies, printed `player
+entered the game`, and progressed to an in-level shell pickup without signal
+11. The hardware run also selected the expected synchronized 640x480@60 ViRGE
+path and activated `Q12: ViRGE RGBA alpha lightmaps active (10 ARGB4444
+atlases)`. This hardware-verifies the VM-string crash fix and sudo-proxy
+keyboard routing. The supplied log stops during E1M1, so the E1M2 transition,
+normal quit, canonical timedemo, Ctrl-C restore, and final Q13 report remain
+the active acceptance work.
+
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
 Phase 7 is now GLQuake compatibility, planned in `docs/QUAKE_PLAN.md`.

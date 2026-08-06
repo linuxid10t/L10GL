@@ -754,6 +754,14 @@ as `L10GL_KBD_DEV`, and requires its successful initialization while still
 rejecting an SSH PTY before framebuffer detachment. Q13 remains open until
 that direct-VT, fresh-boot rerun passes and its measured FPS is copied here.
 
+The second target attempt on 2026-08-05 confirms both fixes on silicon. The
+run selected `/dev/tty1` through `L10GL_KBD_DEV` with no keyboard-disabled
+diagnostic, spawned the E1M1 local server without signal 11, completed sign-on,
+entered live play, and activated the automatic 10-atlas ARGB4444 Q12 path.
+The submitted log ends during E1M1; Q13 therefore remains open pending the
+E1M2 transition, normal quit, timedemo/969-frame result, Ctrl-C restoration,
+and generated PASS report.
+
 ## Execution order
 
 ```text
