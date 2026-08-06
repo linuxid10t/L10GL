@@ -46,6 +46,7 @@ case " $* " in
             exit 0
         fi
         printf '%s\n' 'SpawnServer: e1m1'
+        printf '%s\n' 'Q13: map transition released 147 mipmapped textures'
         printf '%s\n' 'SpawnServer: e1m2'
         ;;
     *' +timedemo demo1 '*)
@@ -73,6 +74,8 @@ grep -Fq 'Q13 Phase 7 ViRGE acceptance: PASS' "$output/q13-report.txt"
 grep -Fq 'timedemo demo1: 969 frames in 230.7 seconds (4.2 fps)' \
     "$output/q13-report.txt"
 grep -Fq 'keyboard VT: /dev/tty1' "$output/q13-report.txt"
+grep -Fq 'launch state: physical VT; reboot not required' \
+    "$output/q13-report.txt"
 grep -Fq -- '-width 640 -height 480 -bpp 16' "$runner_log"
 grep -Fq -- 'L10GL_MODESET=native L10GL_REFRESH=60 L10GL_VSYNC=1' "$runner_log"
 grep -Fq -- 'L10GL_KBD_DEV=/dev/tty1' "$runner_log"

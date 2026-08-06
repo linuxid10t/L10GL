@@ -27,8 +27,9 @@ usage: tools/quake-swrast-gate [options]
 
 Build and run GLQuake's shareware demo1 through L10GL swrast, capture every
 presented frame, verify the canonical timedemo frame count
-(${CANONICAL_DEMO1_FRAMES}), and require its texture trace to fit the 4 MiB
-ViRGE layout.
+(${CANONICAL_DEMO1_FRAMES}), then cycle E1M1 to E1M2 and back to E1M1. Both
+texture traces must fit the 4 MiB ViRGE layout, including repeated map-lifetime
+reclamation.
 
 Options:
   --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
@@ -179,4 +180,63 @@ if ! budget_output=$("$repo_root/tools/quake-vram-budget" --trace "$texture_trac
 fi
 log "$budget_output"
 log "texture trace: $texture_trace"
+
+transition_log="$output_dir/transition.log"
+transition_trace="$output_dir/transition-textures.tsv"
+transition_labels="$output_dir/transition-texture-labels.tsv"
+log "starting automatic E1M1-to-E1M2-to-E1M1 cycle (deadline: ${timeout_seconds}s)"
+
+(
+    cd "$run_root"
+    exec env L10GL_BACKEND=swrast \
+        L10GL_TEXTURE_TRACE="$transition_trace" \
+        L10GL_QUAKE_TEXTURE_LABELS="$transition_labels" \
+        stdbuf -oL -eL "$binary" \
+        -basedir "$run_root" -nosound -nocdaudio -noudp -nojoy -nomouse \
+        -width 320 -height 240 -bpp 16 +developer 1 +gl_max_size 256 \
+        +map e1m1 +wait +map e1m2 +wait +map e1m1
+) >"$transition_log" 2>&1 &
+child_pid=$!
+
+deadline=$((SECONDS + timeout_seconds))
+transition_ready=0
+while kill -0 "$child_pid" 2>/dev/null; do
+    slipgate_count=$(grep -Fc 'the Slipgate Complex' "$transition_log" || true)
+    reclaim_count=$(grep -Fc 'Q13: map transition released ' "$transition_log" || true)
+    if [[ $slipgate_count -ge 2 && $reclaim_count -ge 2 ]] &&
+       grep -Fq 'Castle of the Damned' "$transition_log" &&
+       grep -Fq 'CL_SignonReply: 4' "$transition_log"; then
+        transition_ready=1
+        break
+    fi
+    (( SECONDS < deadline )) ||
+        die "E1M1-to-E1M2-to-E1M1 cycle did not finish within ${timeout_seconds}s; see $transition_log"
+    sleep 1
+done
+
+if [[ $transition_ready -eq 0 ]]; then
+    wait "$child_pid" || true
+    child_pid=""
+    die "GLQuake exited before the final E1M1 completed sign-on; see $transition_log"
+fi
+grep -Fq 'GL_RENDERER: L10GL/swrast' "$transition_log" ||
+    die "transition did not initialize the L10GL swrast renderer; see $transition_log"
+grep -Fq 'Q13: brush textures through 128x128 use picmip 1' "$transition_log" ||
+    die "selective Q13 world-texture policy did not activate during transition; see $transition_log"
+grep -Fq 'Q13: map transition released ' "$transition_log" ||
+    die "map-transition texture reclamation did not activate; see $transition_log"
+
+kill -TERM "$child_pid" 2>/dev/null || true
+wait "$child_pid" || true
+child_pid=""
+
+[[ -s "$transition_trace" ]] || die "transition did not record texture uploads"
+grep -q '^D ' "$transition_trace" ||
+    die "transition trace did not delete old map textures; see $transition_trace"
+if ! transition_budget_output=$("$repo_root/tools/quake-vram-budget" --trace "$transition_trace" 2>&1); then
+    die "map-cycle texture trace does not fit the 4 MiB ViRGE layout: $transition_budget_output"
+fi
+log "$transition_budget_output"
+log "transition texture trace: $transition_trace"
 log "PASS: demo1 reported $frames frames in ${seconds}s (${fps} fps); captured $dump_count PPM frames"
+log "PASS: E1M1-to-E1M2-to-E1M1 completed sign-on with repeated reclamation inside 4 MiB"

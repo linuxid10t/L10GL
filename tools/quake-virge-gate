@@ -32,9 +32,10 @@ The script verifies renderer, mode, Q12 lighting, the bounded Q13 texture
 policy, level transition, timedemo frame count, and Ctrl-C handling. It asks
 the operator to attest the visual and console-restoration checks and writes
 q13-report.txt with the logs.
-Invoke sudo directly from a physical Linux text VT as the first graphics
-workload after a fresh boot.  The gate validates sudo's original terminal and
-passes that device to GLQuake even when sudo runs the command on a proxy PTY.
+Invoke sudo directly from a physical Linux text VT while no other graphics
+workload owns the card. A reboot is not required. The gate validates sudo's
+original terminal and passes that device to GLQuake even when sudo runs the
+command on a proxy PTY.
 
 Options:
   --quake-dir PATH   L10GL-Quake checkout (default: sibling ../L10GL-Quake)
@@ -236,6 +237,10 @@ if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
    ! grep -aFq 'S3 ViRGE: OpenGL texture sampling uses u*N-0.5 texel centers' "$binary"; then
     die "GLQuake binary lacks the OpenGL half-texel ViRGE correction; rebuild L10GL and then rebuild L10GL-Quake"
 fi
+if [[ "$runner" == "$repo_root/tools/l10gl-run" ]] &&
+   ! grep -aFq 'Q13: map transition released ' "$binary"; then
+    die "GLQuake binary lacks map-transition texture reclamation; rebuild the current L10GL-Quake origin/master"
+fi
 
 if [[ -z "$output_dir" ]]; then
     mkdir -p "$repo_root/out"
@@ -258,8 +263,6 @@ l10gl_commit="$(git_revision "$repo_root")"
 quake_commit="$(git_revision "$quake_dir")"
 
 log "results: $output_dir"
-confirm 'Is this the first graphics run after a fresh boot?' ||
-    die 'fresh-boot precondition was not confirmed'
 
 cat >&2 <<'EOF'
 quake-virge-gate: PLAY RUN
@@ -276,6 +279,8 @@ fi
 verify_common_run "$play_log"
 require_log_line "$play_log" 'SpawnServer: e1m1' 'E1M1 start'
 require_log_line "$play_log" 'SpawnServer: e1m2' 'E1M1-to-E1M2 transition'
+require_log_line "$play_log" 'Q13: map transition released ' \
+    'map-transition texture reclamation'
 confirm 'Was E1M1 playable start-to-exit with correct lighting and sharper, stable world textures?' ||
     die 'playability/lighting/texture quality was not accepted'
 confirm 'Did the text console work after the normal quit?' ||
@@ -311,8 +316,9 @@ L10GL commit: $l10gl_commit
 L10GL-Quake commit: $quake_commit
 mode: 640x480x16 at the ViRGE 60 Hz native timing
 keyboard VT: $keyboard_tty
-fresh boot: operator confirmed
+launch state: physical VT; reboot not required
 E1M1 start-to-exit: operator accepted; log confirms transition to E1M2
+map texture lifetime: old mipmapped objects released before E1M2
 Q12 lighting: operator accepted static/dynamic lighting; automatic exact mode logged
 Q13 texture detail: operator accepted sharper stable world textures; bounded policy logged
 normal exit console restore: operator accepted

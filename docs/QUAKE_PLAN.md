@@ -532,23 +532,23 @@ rerun kept the fixed UI atlases readable, completed canonical 969-frame
 in the 2,351,104-byte synchronized texture heap. The ViRGE free-list described
 in Q8 now makes the 37 recorded replacement uploads reuse storage rather than
 burn the remaining margin. Automated format, allocator, trace-lifetime,
-first-fit fragmentation, and real level-fit gates are green. PENDING — human
-texture-quality sign-off on ViRGE; Q11 remains hardware-gated until that
-check.
+first-fit fragmentation, and real level-fit gates are green. The later Q13
+target check accepted the improved texture quality on 2026-08-06.
 
-**Q13 texture-quality correction (2026-08-06): FIT in software; silicon
-rerun pending.** The operator's report that textures looked muddier than
-expected reproduced in a controlled E1M1 swrast comparison, isolating it from
-the ViRGE rasterizer. The blanket Q10 `gl_picmip 2` reduced every mipmapped
-world/model asset to one quarter width and height (one sixteenth the texels):
-E1M1 needed 6,475,392 bytes at picmip 0, 4,205,568 at picmip 1, and 2,065,248
-at picmip 2, versus the 2,351,104-byte synchronized heap. L10GL-Quake commit
+**Q13 texture-quality correction (2026-08-06): visual quality accepted on
+silicon; map-lifetime rerun pending.** The operator's report that textures
+looked muddier than expected reproduced in a controlled E1M1 swrast
+comparison, isolating it from the ViRGE rasterizer. The blanket Q10
+`gl_picmip 2` reduced every mipmapped world/model asset to one quarter width
+and height (one sixteenth the texels): E1M1 needed 6,475,392 bytes at picmip
+0, 4,205,568 at picmip 1, and 2,065,248 at picmip 2, versus the
+2,351,104-byte synchronized heap. L10GL-Quake commit
 `24c95b5` now uses picmip 1 only for brush textures whose original width and
 height are at most 128, retaining picmip 2 for larger brush textures and all
 model/sprite skins. Explicit non-default `gl_picmip` choices keep their
-original behavior. The real 969-frame demo1 rerun produced 188 events and
-replayed through the exact first-fit allocator at **2,286,272 bytes, leaving
-64,832 bytes**.
+original behavior. After the map-lifetime correction, the real 969-frame
+demo1 rerun produced 183 events and replayed through the exact first-fit
+allocator at **2,187,328 bytes, leaving 163,776 bytes**.
 
 The same audit exposed an independent sampler-phase error. Texprobe TEST 18
 proved real DX silicon places texel centers at integer texture coordinates,
@@ -557,8 +557,18 @@ The production ViRGE path had supplied `u*N`; it now applies the missing
 half-texel bias while leaving raw diagnostic callers unchanged and shifts the
 boundary case by one complete repeat period to retain the silicon-proven
 non-negative coordinate range. Unit tests pin rectangular scaling with and
-without the GL bias. The target gate must show sharper stable walls with no
-texture OOM, new seams, swimming, or coordinate corruption.
+without the GL bias. The target check reported that textures look much better.
+
+That same target session exposed a separate E1M1-to-E1M2 lifetime failure:
+the ogre body was the last successful large upload, then
+`progs/h_ogre.mdl_0` requested 8,192 bytes with only 5,120 free. A swrast
+transition trace reproduced the exact event. L10GL-Quake commit `c1693ca`
+registers named texture-cache entries, releases mipmapped world/model/sprite
+objects and alias caches at `Mod_ClearAll`, deletes the previous lightmap
+atlas set, and keeps the translated player skin at the same 128-side policy
+as its base model. The automated E1M1-to-E1M2-to-E1M1 cycle now replays 769
+events at **2,232,384 bytes, leaving 118,720 bytes**. This cycle is part of
+`tools/quake-swrast-gate`; its hardware confirmation does not require a reboot.
 
 ### Q11. First hardware run: fullbright world
 
@@ -742,23 +752,23 @@ the exact path without a command-line format override and fully closes Q12.
 
 Close Phase 7 with the end-to-end gate on the target machine.
 
-*Acceptance:* from a fresh boot, `l10gl-run`-launched GLQuake at
-640×480@60 plays the shareware E1M1 start-to-exit with lighting per Q12,
-level transition succeeds (Q8/Q10), exit and Ctrl-C restore the console,
-and `timedemo demo1` FPS is recorded in this document. Playability, not
-frame rate, is the bar — this chip was never fast at GLQuake and single-digit
-FPS does not block acceptance. Performance follow-ups go to the Phase 6
-methodology with before/after numbers.
+*Acceptance:* from a physical VT with the card otherwise idle,
+`l10gl-run`-launched GLQuake at 640×480@60 plays the shareware E1M1
+start-to-exit with lighting per Q12, level transition succeeds (Q8/Q10), exit
+and Ctrl-C restore the console, and `timedemo demo1` FPS is recorded in this
+document. Playability, not frame rate, is the bar — this chip was never fast
+at GLQuake and single-digit FPS does not block acceptance. Performance
+follow-ups go to the Phase 6 methodology with before/after numbers.
 
-*Status (Q13, started 2026-08-04): first hardware failure fixed; fresh-boot
-rerun pending.* `tools/quake-virge-gate` stages the shareware data outside the
-GPL/MIT boundary and drives the complete acceptance sequence through
-`l10gl-run`. It forces the accepted 640×480@60 native, synchronized ViRGE
-configuration. The first run starts E1M1 with developer map markers enabled,
-requires the operator to play through its exit into E1M2, and then exercises
-normal `quit`. The second runs canonical `timedemo demo1` and exercises the
-port's raw-keyboard Ctrl-C signal path. The runner rejects a wrong renderer,
-mode, or Q12 lightmap selection, a missing E1M1-to-E1M2 transition, a non-969
+*Status (Q13, started 2026-08-04): texture quality accepted; map-lifetime and
+input/lifecycle rerun pending.* `tools/quake-virge-gate` stages the shareware
+data outside the GPL/MIT boundary and drives the complete acceptance sequence
+through `l10gl-run`. It forces the accepted 640×480@60 native, synchronized
+ViRGE configuration. The first run starts E1M1 with developer map markers
+enabled, requires the operator to play through its exit into E1M2, and then
+exercises normal `quit`. The second runs canonical `timedemo demo1` and
+exercises the port's raw-keyboard Ctrl-C signal path. The runner rejects a
+wrong renderer, mode, or Q12 lightmap selection, a missing E1M1-to-E1M2 transition, a non-969
 frame result, and any ViRGE engine timeout or texture OOM. It writes both logs
 and an operator-attested report containing the exact FPS and repository
 commits. A no-hardware two-run lifecycle fixture is part of `make check`.
@@ -776,7 +786,8 @@ L10GL-Quake commit `26cad5b` adds explicit physical-VT keyboard input. The
 acceptance runner now validates sudo's original `SUDO_TTY`, passes that device
 as `L10GL_KBD_DEV`, and requires its successful initialization while still
 rejecting an SSH PTY before framebuffer detachment. Q13 remains open until
-that direct-VT, fresh-boot rerun passes and its measured FPS is copied here.
+that direct-VT rerun passes and its measured FPS is copied here; no reboot is
+required.
 
 The second target attempt on 2026-08-05 verified the server-crash fix, but not
 keyboard input. The run selected `/dev/tty1` through `L10GL_KBD_DEV` with no
@@ -791,13 +802,13 @@ input-route marker in both logs. Q13 remains open pending live movement,
 console entry, E1M2 transition, normal quit, timedemo/969-frame result, Ctrl-C
 restoration, and the generated PASS report.
 
-On 2026-08-06 the pre-rerun texture-quality audit also replaced the blanket
+On 2026-08-06 the texture-quality audit also replaced the blanket
 picmip-2 world policy with the bounded <=128x128 brush picmip-1 policy and
 corrected the ViRGE OpenGL half-texel sampler phase. The canonical swrast
-demo still completes 969 frames, and its exact 4 MiB replay leaves 64,832
-bytes. The pending Q13 hardware run must therefore check texture sharpness
-and alignment in addition to keyboard delivery: nearby walls should retain
-more detail, with no OOM, seams, swimming, or regression in Q12 lighting.
+demo still completes 969 frames, and its exact 4 MiB replay now leaves 163,776
+bytes. Hardware confirmed the improved texture quality. The pending Q13 run
+must confirm the map-lifetime fix plus keyboard delivery, normal quit,
+timedemo/Ctrl-C, and console restoration.
 
 ## Execution order
 

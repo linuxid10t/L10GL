@@ -262,8 +262,11 @@ The Q13 quality policy selectively raises brush textures whose original sides
 are at most 128 texels to picmip 1; larger brush textures and every model or
 sprite skin retain picmip 2. Fixed charset, HUD scraps, and other UI textures
 remain readable. The canonical shareware `demo1`/E1M3 trace peaks at
-2,286,272 texture bytes, leaving 64,832 bytes after 640x480 RGB555 double
-buffers and 16-bit Z. Inspect any gate run with:
+2,187,328 texture bytes, leaving 163,776 bytes after 640x480 RGB555 double
+buffers and 16-bit Z. L10GL-Quake commit `c1693ca` also releases mipmapped
+world/model/sprite textures and old lightmap atlases between maps. The gate's
+E1M1-to-E1M2-to-E1M1 cycle peaks at 2,232,384 bytes, leaving 118,720. Inspect
+any gate run with:
 
 ```sh
 tools/quake-vram-budget --trace /path/to/results/textures.tsv
@@ -277,8 +280,8 @@ the requested and total free byte counts; `glTexImage2D` reports
 ### GLQuake ViRGE phase acceptance
 
 Phase 7's final Q13 gate is an interactive target-machine run. Log in directly
-on a physical Linux text VT (`/dev/ttyN`), not through SSH, and as the first
-graphics workload after a fresh boot run:
+on a physical Linux text VT (`/dev/ttyN`), not through SSH, while no other
+graphics workload owns the card. A reboot is not required. Run:
 
 ```sh
 sudo tools/quake-virge-gate
@@ -302,10 +305,11 @@ the gate passes the original `/dev/ttyN` to GLQuake for keyboard-mode control.
 Sudo remains the physical-VT reader and forwards medium-raw bytes through the
 child's stdin. The gate requires this proxy-aware input build before touching
 the framebuffer, then checks the renderer/mode/lightmap/keyboard markers,
-E1M1-to-E1M2 transition, 969-frame timedemo result, absence of unexpected
-signals or ViRGE timeout/OOM diagnostics, and the Ctrl-C signal path. It
-retains `play.log`, `timedemo.log`, and an operator-
-attested `q13-report.txt` under a fresh ignored `out/quake-q13.*` directory.
+E1M1-to-E1M2 transition, map-texture reclamation, 969-frame timedemo result,
+absence of unexpected signals or ViRGE timeout/OOM diagnostics, and the
+Ctrl-C signal path. It retains `play.log`, `timedemo.log`, and an
+operator-attested `q13-report.txt` under a fresh ignored `out/quake-q13.*`
+directory.
 Use `--quake-dir`, `--output-dir`, or `--runner` for non-default checkout and
 launcher locations.
 

@@ -703,19 +703,20 @@ mode ioctls, puts the child terminal in fully raw mode, and reads the forwarded
 medium-raw bytes from stdin. The Q13 gate requires its new `keyboard input via
 stdin` marker in the binary before hardware detachment and in both logs. Thus
 the VM-string fix is hardware-verified, while movement, console entry, Ctrl-C,
-E1M2 transition, timedemo, and the final report remain pending a fresh rerun.
+E1M2 transition, timedemo, and the final report remain pending a direct-VT
+rerun. A reboot is not required.
 
-**Q13 texture-quality follow-up implemented 2026-08-06; hardware rerun
-pending.** David's gut report that the textures looked muddy reproduced in an
-E1M1 swrast A/B/C comparison, so the dominant cause was the intentional Q10
-residency policy rather than an unknown ViRGE blur. Global picmip 0, 1, and 2
-sets required 6,475,392, 4,205,568, and 2,065,248 bytes respectively for
-E1M1, against the 2,351,104-byte texture heap. L10GL-Quake commit `24c95b5`
-now sends brush textures with original dimensions <=128x128 through picmip 1
-while retaining picmip 2 for larger brush textures and every model/sprite
-skin. The actual canonical demo1 rerun completed 969 frames; its 188-event
-trace replayed through the exact first-fit allocator at 2,286,272 bytes,
-leaving 64,832.
+**Q13 texture-quality follow-up accepted on hardware 2026-08-06;
+map-lifetime rerun pending.** David's gut report that the textures looked
+muddy reproduced in an E1M1 swrast A/B/C comparison, so the dominant cause was
+the intentional Q10 residency policy rather than an unknown ViRGE blur. Global
+picmip 0, 1, and 2 sets required 6,475,392, 4,205,568, and 2,065,248 bytes
+respectively for E1M1, against the 2,351,104-byte texture heap. L10GL-Quake
+commit `24c95b5` now sends brush textures with original dimensions <=128x128
+through picmip 1 while retaining picmip 2 for larger brush textures and every
+model/sprite skin. After the lifetime fix, the actual canonical demo1 rerun
+completed 969 frames; its 183-event trace replayed through the exact first-fit allocator at
+2,187,328 bytes, leaving 163,776.
 
 The audit also found a secondary ViRGE sampling-phase mismatch. Texprobe TEST
 18 had established integer hardware coordinates as texel centers, but the GL
@@ -724,9 +725,20 @@ path scaled normalized coordinates as `u*N`; OpenGL and swrast require
 whole-period correction at repeated zero boundaries so coordinates remain in
 the non-negative range proven by Q11. Raw diagnostic callers remain
 unchanged, and the pure rectangular-coordinate test pins both conventions.
-The next target run must show visibly sharper nearby world textures without
-OOM, seams, swimming, coordinate corruption, or a Q12 lighting regression;
-keyboard/movement/exit/timedemo acceptance remains as described above.
+The target check reported that textures look much better, accepting the world
+detail and half-texel correction.
+
+Loading E1M2 then exposed a distinct texture-lifetime failure. The exact
+E1M1-to-E1M2 swrast replay fails at event 252: the ogre body uploads, but
+`progs/h_ogre.mdl_0` needs 8,192 bytes with only 5,120 free because the
+original named-texture cache never advanced and no map textures were deleted.
+L10GL-Quake commit `c1693ca` registers named entries, releases mipmapped
+world/model/sprite objects and alias caches during `Mod_ClearAll`, deletes the
+previous lightmap atlas set, and bounds the translated player skin to 128x128.
+The automated E1M1-to-E1M2-to-E1M1 trace now peaks at 2,232,384 bytes and
+leaves 118,720. The operator gate requires the new reclamation marker; its
+remaining keyboard/movement/exit/timedemo acceptance requires a physical VT
+but no reboot.
 
 **Phases reprioritized 2026-07-19: Quake first.** By project decision, the
 maximum OpenGL 1.1 program above is renumbered to Phase 8 and the active
