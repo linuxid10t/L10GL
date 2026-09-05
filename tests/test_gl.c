@@ -1434,6 +1434,13 @@ static void test_texture_lifetime(void)
                  GL_RGBA, GL_UNSIGNED_BYTE, texel);
     expect_int("context release has one live texture",
                swrast_debug_texture_count(&ctx), 1);
+    /* Texture zero owns a retained CPU image too. LeakSanitizer checks its
+     * release, while the count below checks both backend allocations. */
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, texel);
+    expect_int("default texture allocated",
+               swrast_debug_texture_count(&ctx), 2);
     l10glMakeCurrent(NULL);
     expect_int("context release frees live textures",
                swrast_debug_texture_count(&ctx), 0);

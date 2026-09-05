@@ -90,6 +90,7 @@ static void gl_release_textures(void)
     }
     gl_state.textures = NULL;
     gl_state.bound_texture = NULL;
+    free(gl_state.default_texture.retained);
     memset(&gl_state.default_texture, 0, sizeof(gl_state.default_texture));
 }
 
