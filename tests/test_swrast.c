@@ -526,6 +526,76 @@ static int test_rectangular_textures(const char *directory)
     return failed ? -1 : 0;
 }
 
+/* Large finite UVs must wrap/clamp before conversion to integer texels. */
+static int test_texture_coordinate_range(const char *directory)
+{
+    static const uint32_t texels[4] = {
+        0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffffff,
+    };
+    static const struct {
+        float u, v;
+        enum l10gl_tex_wrap wrap;
+        struct rgb nearest, linear;
+    } cases[] = {
+        { 1.0e20f, 0.25f, L10GL_WRAP_CLAMP, {0,255,0}, {0,255,0} },
+        { -1.0e20f, 0.25f, L10GL_WRAP_CLAMP, {255,0,0}, {255,0,0} },
+        { 0.25f, 1.0e20f, L10GL_WRAP_CLAMP, {0,0,255}, {0,0,255} },
+        { 0.25f, -1.0e20f, L10GL_WRAP_CLAMP, {255,0,0}, {255,0,0} },
+        { 1.0e20f, 0.25f, L10GL_WRAP_REPEAT, {255,0,0}, {128,128,0} },
+        { -1.0e20f, 0.25f, L10GL_WRAP_REPEAT, {255,0,0}, {128,128,0} },
+        { 0.25f, 1.0e20f, L10GL_WRAP_REPEAT, {255,0,0}, {128,0,128} },
+        { 0.25f, -1.0e20f, L10GL_WRAP_REPEAT, {255,0,0}, {128,0,128} },
+    };
+    struct l10gl_texture texture = {0};
+    struct l10gl_ctx ctx;
+    char path[256];
+    int failed = 0, frame = 0;
+
+    snprintf(path, sizeof(path), "%s/uv%%02d.ppm", directory);
+    if (setenv("L10GL_SWRAST_DUMP", path, 1) < 0)
+        return -1;
+    if (l10gl_create(&ctx, &swrast_backend, 1, 1, 3) < 0) {
+        unsetenv("L10GL_SWRAST_DUMP");
+        return -1;
+    }
+    unsetenv("L10GL_SWRAST_DUMP");
+    if (l10gl_tex_image_2d(&ctx, &texture, 2, 2,
+                           L10GL_TEX_FMT_ARGB8888, texels) < 0) {
+        l10gl_destroy(&ctx);
+        return -1;
+    }
+    l10gl_bind_texture(&ctx, &texture);
+    l10gl_enable_depth_test(&ctx, 0);
+    for (int linear = 0; linear < 2; linear++) {
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            float u = cases[i].u, v = cases[i].v;
+            struct rgb expected = linear ? cases[i].linear : cases[i].nearest;
+            struct rgb *pixels;
+
+            l10gl_tex_parameter(&ctx, linear ? L10GL_FILTER_LINEAR :
+                                 L10GL_FILTER_NEAREST, cases[i].wrap);
+            l10gl_clear(&ctx);
+            draw_quad(&ctx,
+                      vertex(0, 0, 0, 1, 1, 1, 1, 1, u, v),
+                      vertex(1, 0, 0, 1, 1, 1, 1, 1, u, v),
+                      vertex(1, 1, 0, 1, 1, 1, 1, 1, u, v),
+                      vertex(0, 1, 0, 1, 1, 1, 1, 1, u, v), 1);
+            l10gl_swap_buffers(&ctx);
+            snprintf(path, sizeof(path), "%s/uv%02d.ppm", directory, frame++);
+            pixels = read_ppm(path, 1, 1);
+            if (!pixels)
+                failed = 1;
+            else
+                failed |= expect_pixel(pixels, 1, 0, 0, expected.r,
+                                        expected.g, expected.b, path);
+            free(pixels);
+            unlink(path);
+        }
+    }
+    l10gl_destroy(&ctx);
+    return failed ? -1 : 0;
+}
+
 /* Render a single white fragment with the given vertex alpha under an alpha
  * test (depth off), returning 1 if the fragment survived (pixel is bright),
  * 0 if rejected, -1 on an infrastructure failure. */
@@ -873,6 +943,7 @@ int main(void)
     failed |= test_double_buffered_swaps(directory);
     failed |= test_polygon_matches_fan(directory);
     failed |= test_rectangular_textures(directory);
+    failed |= test_texture_coordinate_range(directory);
     failed |= test_alpha_test_truth_table(directory);
     failed |= test_alpha_test_depth_untouched(directory);
     failed |= test_tex_env_modes(directory);

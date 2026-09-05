@@ -1,9 +1,23 @@
-# L10GL handoff brief — state as of 2026-07-18
+# L10GL handoff brief — state through 2026-09-05
 
 Audience: an implementing agent picking up this project cold. Read
 `PLAN.md` (roadmap + current-state snapshot) and
 `docs/datasheets/README.md` (datasheet page index + verified register
 facts) before changing code.
+
+**Local debugging pass completed 2026-09-05.** Fixed signed overflow in
+`glTexSubImage2D` bounds validation, the default texture's retained-image leak
+on context cleanup, and out-of-range integer conversions/wrong colors for
+large finite swrast texture coordinates. `fbtest` now honors `LDFLAGS`, so
+the full build supports sanitizer linking. Regressions reproduce both GL
+bugs under UBSan/LeakSanitizer and check 16 nearest/bilinear, repeat/clamp UV
+cases through PPM pixels. Full `make -B check` passes with normal flags and
+ASan/UBSan/float-cast-overflow instrumentation with leak detection enabled.
+The real swrast gate completed 969 frames in 13.9 seconds (69.8 FPS) and the
+E1M1-to-E1M2-to-E1M1 cycle fit the 4 MiB replay budget with 118,720 bytes
+remaining. Local artifacts: `out/quake-q9.Qnn1DK` and
+`out/debug-2026-09-05`. No ViRGE register programming changed; Q13 physical-VT
+acceptance remains pending as described below.
 
 **Operator constraint for every future agent:** the hardware target is a
 second physical computer. Exhaust local checks, batch target observations, and

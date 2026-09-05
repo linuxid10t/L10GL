@@ -341,6 +341,19 @@ static struct swrast_color texture_sample(const struct swrast_private *priv,
                  priv->filter == L10GL_FILTER_LINEAR_MIPMAP_NEAREST ||
                  priv->filter == L10GL_FILTER_LINEAR_MIPMAP_LINEAR;
 
+    /* Bound normalized coordinates before scaling and converting to int.
+     * Keep negative repeat fractions so rounding near zero cannot turn a
+     * sample just below the seam into a sample on its other side. */
+    if (priv->wrap == L10GL_WRAP_REPEAT) {
+        if (u < -1.0f || u > 1.0f)
+            u = fmodf(u, 1.0f);
+        if (v < -1.0f || v > 1.0f)
+            v = fmodf(v, 1.0f);
+    } else {
+        u = clamp01(u);
+        v = clamp01(v);
+    }
+
     if (!linear) {
         int x = wrap_index((int)floorf(u * texture->width), texture->width,
                            priv->wrap);
