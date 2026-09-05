@@ -91,7 +91,9 @@ The detailed hardware history and test evidence live in
 [`docs/QUAKE_PLAN.md`](docs/QUAKE_PLAN.md) (Phase 7); the maximum OpenGL 1.1
 compatibility roadmap that follows it, including the
 native-ViRGE/software-fallback boundary, is
-[`docs/GL11_PLAN.md`](docs/GL11_PLAN.md) (Phase 8).
+[`docs/GL11_PLAN.md`](docs/GL11_PLAN.md) (Phase 8). X11/GLX support is planned
+in [`docs/GLX_PLAN.md`](docs/GLX_PLAN.md) (Phase 9), starting with software
+GLX 1.2 and a later native-ViRGE ownership investigation; it is not implemented.
 
 ## Architecture
 

@@ -31,9 +31,11 @@ must continue to cite the relevant databook section in comments.
 
 ## What “as full as the hardware can handle” means
 
-L10GL will offer an RGBA, monoscopic, fullscreen console context. GLX, WGL,
-window-system visuals, direct rendering infrastructure, and X11 integration
-remain outside the project. They are not OpenGL core rendering commands.
+Phase 8 targets an RGBA, monoscopic, fullscreen console context. X11/GLX is
+now planned separately in Phase 9, [`GLX_PLAN.md`](GLX_PLAN.md), and reuses
+this phase's state, pixel-transfer, and display-list work. WGL and direct
+rendering infrastructure remain outside this phase. Window-system commands
+are not counted as OpenGL core coverage.
 
 OpenGL 1.1 explicitly permits a context without right, auxiliary, depth,
 stencil, or accumulation buffers. L10GL may therefore report:
@@ -331,7 +333,8 @@ Export every core 1.1 symbol with C linkage and complete `include/GL/gl.h`.
 Add compile tests for representative unmodified legacy programs and build a
 small application corpus that exercises arrays, lists, lighting, textures,
 pixel operations, selection, and feedback. Preserve the L10GL fullscreen
-context calls as the only nonstandard setup/presentation boundary.
+context calls as the console setup/presentation boundary; Phase 9 adds the
+separate standard GLX binding.
 
 Acceptance: symbol coverage is 336/336; header/token coverage is complete;
 no manifest row remains `planned`; and every non-exact row names either an

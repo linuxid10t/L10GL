@@ -12,13 +12,15 @@ The end state is a **maximum-practical OpenGL 1.1-compatible userspace
 driver** that talks directly to vintage fixed-function hardware over PCI MMIO
 — exactly the way the current demos work. Exact native acceleration is used
 where the hardware supports it; correct common frontend or software behavior
-handles the rest. Explicit non-goals: no DRM, no DRI, no Mesa integration, no
-kernel module, no X11/GLX. An application links against L10GL (optionally
+handles the rest. The console path requires no DRM, DRI, Mesa renderer, or
+new kernel module. X11/GLX is now planned separately in Phase 9. A console
+application links against L10GL (optionally
 through a `gl.h`-compatible shim) and renders full-screen on the console. The
 library is responsible for the video mode: first by adopting/requesting it
 through fbdev, ultimately by programming the CRTC directly (Phase 3). Quake
 compatibility is Phase 7 in `docs/QUAKE_PLAN.md`; the detailed OpenGL 1.1
-expansion that follows it is Phase 8 in `docs/GL11_PLAN.md`.
+expansion that follows it is Phase 8 in `docs/GL11_PLAN.md`. The GLX execution
+plan is Phase 9 in `docs/GLX_PLAN.md`.
 
 Priorities, in order:
 
@@ -1386,8 +1388,26 @@ Native ViRGE acceleration remains the first choice for operations documented
 by DB019-B. Unsupported hardware state must use an exact software path, or an
 honestly absent context buffer, rather than silently degrading. OpenGL 1.1
 permits contexts with zero stencil and accumulation bits; their command and
-query semantics still belong in the API. GLX/X11 and other window-system
-integration remain out of scope.
+query semantics still belong in the API. GLX/X11 integration is tracked in
+Phase 9 rather than counted as OpenGL core coverage.
+
+---
+
+## Phase 9 — GLX and X11 integration
+
+**Planned 2026-09-05 at the user's request.** The detailed plan is
+[`docs/GLX_PLAN.md`](docs/GLX_PLAN.md). First target complete GLX 1.2 over
+the Phase 8 OpenGL 1.1 software renderer, using a dedicated Xorg indirect GLX
+provider. Start by proving the server/GL dispatch boundary, then separate
+context state, shared objects, and drawable storage; prove X11 presentation;
+integrate the provider; and close the protocol and application acceptance gates.
+
+Context and X11 prototype work can begin before Phase 8 finishes, but complete
+GLX acceptance depends on its state, pixel-transfer, display-list, and software
+rendering gates. Native ViRGE windows require a later X-server ownership and
+VRAM-transfer investigation. GLX 1.3/1.4 are separate follow-on scope. Keep
+the console build independent of X dependencies and preserve the Q13 hardware
+acceptance requirement.
 
 ---
 
@@ -1432,6 +1452,8 @@ Phase 6            — completed/rejected experiments feed the next baseline
 Phase 7 (Q0→Q13)   — active; see docs/QUAKE_PLAN.md; Q9 (swrast timedemo
                      gate) strictly precedes the Q10→Q13 hardware stage
 Phase 8 (C0→C12)   — after Phase 7; see docs/GL11_PLAN.md for dependencies
+Phase 9 (GX0→GX6)  — GLX software target; early work can overlap Phase 8
+                     GX7 native X acceleration and GX8 newer GLX follow later
 ```
 
 Good first parallel assignment for three agents: (1) Phase 0 fixes,
