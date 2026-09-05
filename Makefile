@@ -108,7 +108,7 @@ test-quake-linkgate: tests/test_quake_linkgate.o $(LIBRARY)
 
 # CPU-drawn fbdev pattern; deliberately independent of L10GL and PCI access.
 fbtest: demos/fbtest.o
-	$(CC) -o $@ $<
+	$(CC) -o $@ $< $(LDFLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
