@@ -975,6 +975,21 @@ static void test_texture_subimage(struct l10gl_ctx *ctx)
     glTexSubImage2D(GL_TEXTURE_2D, 0, 1, 0, 2, 1, GL_RGB, GL_UNSIGNED_BYTE, red);
     expect_int("subimage out of bounds", glGetError(), GL_INVALID_VALUE);
 
+    /* Bounds must be checked without overflowing signed GLsizei/GLint.
+     * Empty opposite axes keep the unfixed path from writing out of bounds. */
+    glTexSubImage2D(GL_TEXTURE_2D, 0, INT_MAX, 0, 1, 0, GL_RGB,
+                    GL_UNSIGNED_BYTE, red);
+    expect_int("subimage overflowing x offset", glGetError(), GL_INVALID_VALUE);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 1, 0, INT_MAX, 0, GL_RGB,
+                    GL_UNSIGNED_BYTE, red);
+    expect_int("subimage overflowing width", glGetError(), GL_INVALID_VALUE);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, INT_MAX, 0, 1, GL_RGB,
+                    GL_UNSIGNED_BYTE, red);
+    expect_int("subimage overflowing y offset", glGetError(), GL_INVALID_VALUE);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 1, 0, INT_MAX, GL_RGB,
+                    GL_UNSIGNED_BYTE, red);
+    expect_int("subimage overflowing height", glGetError(), GL_INVALID_VALUE);
+
     glDeleteTextures(1, &tex);
     /* With the bound texture deleted there is no retained level to update. */
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, red);

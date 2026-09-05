@@ -1503,8 +1503,10 @@ void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
         gl_record_error(GL_INVALID_OPERATION);
         return;
     }
-    if (xoffset + width > object->retained_width ||
-        yoffset + height > object->retained_height) {
+    if (xoffset > object->retained_width ||
+        width > object->retained_width - xoffset ||
+        yoffset > object->retained_height ||
+        height > object->retained_height - yoffset) {
         gl_record_error(GL_INVALID_VALUE);
         return;
     }
